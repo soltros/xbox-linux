@@ -57,6 +57,8 @@ cmake --build build/runtime --parallel 4
 
 For a shareable title run log, use [`tools/run_diagnostics.sh`](tools/run_diagnostics.sh). It launches the title in its normal window, records runtime output and host/display details, then packages a filtered summary and the full log. See [Capturing a title run](docs/DIAGNOSTICS.md) for timeouts and output locations. The wrapper creates the save directory and excludes game and save contents from the bundle.
 
+For the usual Obi-Wan checkout layout, run `./diagnostic.sh` from this repository root. It finds the title launcher and extracted game directory automatically; environment variables can override either path.
+
 ## Using it from a title project
 
 Title builds consume the framework as a separate dependency. For a sibling checkout, the default path is `../xbox-linux/third_party/xboxrecomp`; otherwise set `XBOXRECOMP_DIR` to that framework directory. Title setup scripts can call `tools/install_runtime.sh` before configuring their own launcher. For example, the Obi-Wan project installer fetches/builds this runtime, then generates and builds Obi-Wan's title-specific code. The UC2 project currently uses the same environment for static analysis; it does not yet have a runnable UC2 recompilation target.

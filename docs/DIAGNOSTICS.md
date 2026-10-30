@@ -1,6 +1,6 @@
 # Capturing a title run
 
-Use the shared diagnostic wrapper when a title starts, hangs, renders incorrectly, or exits unexpectedly. It records the complete console log, launch arguments, host/display/GPU basics, selected `RECOMP_*` settings, and a filtered summary. It packages these files into a `.tar.gz` bundle without copying game files or save data.
+Use the shared diagnostic wrapper when a title starts, hangs, renders incorrectly, or exits unexpectedly. It records the complete console log, launch arguments, host/display/GPU basics, selected `RECOMP_*` settings, and a filtered summary. It packages these files into a `.tar.gz` bundle without copying game files or save data. For the Obi-Wan checkout layout, the repository-root `./diagnostic.sh` supplies the usual title paths automatically.
 
 From the runtime checkout, run:
 
@@ -10,6 +10,14 @@ From the runtime checkout, run:
   "/path/to/extracted/game" \
   "$PWD/diagnostics/obiwan-save"
 ```
+
+For Obi-Wan, the short form is:
+
+```sh
+./diagnostic.sh
+```
+
+It checks the sibling `obiwan-recomp/build/` locations for the title executable, expects the extracted game at `../Star Wars - Obi-Wan (USA)`, and stores saves under `xbox-linux/diagnostics/obiwan-save`. Override any of these with `OBIWAN_EXECUTABLE`, `OBIWAN_GAME_DIR`, or `OBIWAN_SAVE_DIR`.
 
 The wrapper creates the save directory if needed. The title opens its normal window. Close it normally when you have captured the behavior you want; otherwise the wrapper sends an interrupt after 45 seconds, allows five seconds for shutdown, then kills a process that remains. The runtime watchdog defaults to 20 seconds. The wrapper itself exits successfully after collecting the run; check `summary.txt` for the game's actual exit outcome.
 
