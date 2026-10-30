@@ -46,6 +46,10 @@ export RECOMP_VBLANK=${RECOMP_VBLANK:-paced}
 export RECOMP_PB_EXEC=${RECOMP_PB_EXEC:-1}
 export RECOMP_USB=${RECOMP_USB:-1}
 export RECOMP_WATCHDOG_SECS=${RECOMP_WATCHDOG_SECS:-28}
+# This title-specific run is for debugging input as well as rendering. Sample
+# SDL/XInput state during USB reports so controller detection is visible in
+# the bundle without requiring callers to remember an extra setting.
+export RECOMP_INPUT_DIAG=${RECOMP_INPUT_DIAG-1}
 # Preserve an explicitly empty value so callers can disable timed input and
 # drive the pad through RECOMP_PAD_LIVE instead.
 export RECOMP_PAD_SCRIPT=${RECOMP_PAD_SCRIPT-6000:start,9000:a}
