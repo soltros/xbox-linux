@@ -1,0 +1,515 @@
+diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
+index 10d00f4..d4d1579 100644
+--- a/src/kernel/kernel_bridge.c
++++ b/src/kernel/kernel_bridge.c
+@@ -716,6 +716,12 @@ static DWORD WINAPI bridge_thread_main(LPVOID param)
+     recomp_func_t fn = s->fn;
+     uint32_t ctx1 = s->ctx1, ctx2 = s->ctx2;
+ 
++    if (getenv("RECOMP_THREAD_TRACE"))
++        fprintf(stderr, "  [THREAD] host=%u host-fn=%p callback=0x%08X "
++                        "ctx2=0x%08X stack=0x%08X\n",
++                GetCurrentThreadId(), (void *)(uintptr_t)fn, ctx1, ctx2,
++                s->stack_top);
++
+     /* Own register set (RECOMP_TLS), own simulated stack -- and own TIB.
+      *
+      * The TIB carries the SEH chain head and, through fs:[4], the CRT's
+@@ -2688,6 +2694,23 @@ int xbox_DpcQueue(uint32_t dpc, uint32_t arg1, uint32_t arg2)
+     if (!dpc)
+         return 0;
+ 
++    /* Bring-up trace: identify each guest deferred routine once. This lets
++     * controller and device interrupt work be distinguished from the NV2A
++     * vblank DPC without logging every frame. */
++    if (getenv("RECOMP_DPC_TRACE")) {
++        static uint32_t seen[128];
++        static unsigned nseen;
++        uint32_t routine = BRIDGE_MEM32(dpc + 12);
++        unsigned i;
++        for (i = 0; i < nseen && seen[i] != routine; i++) { }
++        if (routine && i == nseen && nseen < 128) {
++            seen[nseen++] = routine;
++            fprintf(stderr, "  [DPC] dpc=0x%08X routine=0x%08X context=0x%08X\n",
++                    dpc, routine, BRIDGE_MEM32(dpc + 16));
++            fflush(stderr);
++        }
++    }
++
+     dpc_lock();
+     if (BRIDGE_MEM8(dpc + 2)) {                 /* already queued */
+         LeaveCriticalSection(&g_dpc_lock);
+diff --git a/src/kernel/kernel_file.c b/src/kernel/kernel_file.c
+index 2651871..8ee208c 100644
+--- a/src/kernel/kernel_file.c
++++ b/src/kernel/kernel_file.c
+@@ -17,6 +17,7 @@
+ #define _GNU_SOURCE   /* FNM_CASEFOLD */
+ #include "kernel.h"
+ #include <string.h>
++#include <strings.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ 
+@@ -1113,6 +1114,50 @@ static int posix_obj_path(PXBOX_OBJECT_ATTRIBUTES oa, char* host_path, size_t n)
+     return xbox_translate_path(xbox_path, host_path, (DWORD)n) ? 1 : 0;
+ }
+ 
++/* Xbox volumes are case-insensitive while Linux paths are not. Resolve each
++ * existing path component using ASCII case folding, leaving the first missing
++ * component (and its suffix) untouched so create/open-if still works. */
++static void posix_casefold_existing_path(char *path, size_t capacity)
++{
++    char prefix[MAX_PATH];
++    size_t used = 0;
++    const char *p = path;
++    if (*p == '/') { prefix[used++] = '/'; p++; }
++    prefix[used] = '\0';
++    while (*p) {
++        const char *start;
++        size_t length;
++        DIR *dir;
++        struct dirent *entry;
++        char component[NAME_MAX + 1];
++        int found = 0;
++        while (*p == '/') p++;
++        if (!*p) break;
++        start = p;
++        while (*p && *p != '/') p++;
++        length = (size_t)(p - start);
++        if (length > NAME_MAX || used + length + 2 >= sizeof(prefix)) return;
++        memcpy(component, start, length); component[length] = '\0';
++        dir = opendir(used ? prefix : ".");
++        if (!dir) return;
++        while ((entry = readdir(dir)) != NULL) {
++            if (strcasecmp(entry->d_name, component) == 0) {
++                size_t match_len = strlen(entry->d_name);
++                if (used + match_len + 2 < sizeof(prefix)) {
++                    if (used && prefix[used - 1] != '/') prefix[used++] = '/';
++                    memcpy(prefix + used, entry->d_name, match_len);
++                    used += match_len; prefix[used] = '\0';
++                    found = 1;
++                }
++                break;
++            }
++        }
++        closedir(dir);
++        if (!found) return;
++    }
++    if (strlen(prefix) < capacity) strcpy(path, prefix);
++}
++
+ NTSTATUS __stdcall xbox_NtCreateFile(
+     PHANDLE FileHandle, ACCESS_MASK DesiredAccess,
+     PXBOX_OBJECT_ATTRIBUTES ObjectAttributes, PXBOX_IO_STATUS_BLOCK IoStatusBlock,
+@@ -1129,6 +1174,7 @@ NTSTATUS __stdcall xbox_NtCreateFile(
+         xbox_log(XBOX_LOG_ERROR, XBOX_LOG_FILE, "NtCreateFile: path translation failed");
+         return STATUS_OBJECT_PATH_NOT_FOUND;
+     }
++    posix_casefold_existing_path(host_path, sizeof(host_path));
+ 
+     int fd;
+     /* A partition device opened as a directory: the volume, for a free-space
+diff --git a/src/kernel/kernel_rtl.c b/src/kernel/kernel_rtl.c
+index 28066a7..4164951 100644
+--- a/src/kernel/kernel_rtl.c
++++ b/src/kernel/kernel_rtl.c
+@@ -421,12 +421,13 @@ static void crt_lock_trace(const char *what, PRTL_CRITICAL_SECTION guest)
+     {
+         static int watch = -1;
+         static uint32_t watch_va;
++        static unsigned watch_count;
+         if (watch < 0) {
+             const char *w = getenv("RECOMP_CS_WATCH");
+             watch = w != NULL;
+             watch_va = w ? (uint32_t)strtoul(w, NULL, 0) : 0;
+         }
+-        if (watch && va == watch_va) {
++        if (watch && va == watch_va && watch_count++ < 16) {
+             fprintf(stderr, "  [CSWATCH] t%-6lu %s 0x%08X\n",
+                     GetCurrentThreadId(), what, va);
+             xbox_guest_backtrace(8);
+diff --git a/src/kernel/kernel_thread.c b/src/kernel/kernel_thread.c
+index 9afbbe3..663ed74 100644
+--- a/src/kernel/kernel_thread.c
++++ b/src/kernel/kernel_thread.c
+@@ -506,6 +506,10 @@ void xbox_GuestThreadPin(const char *role)
+     DWORD_PTR mask = xbox_GuestCpuMask();
+     int core = 0;
+ 
++    if (getenv("RECOMP_THREAD_TRACE"))
++        fprintf(stderr, "  [THREAD] host=%u role=%s\n", GetCurrentThreadId(),
++                role ? role : "?");
++
+     if (!mask)
+         return;
+     while (!((mask >> core) & 1))
+diff --git a/src/kernel/nv2a_pb_exec.c b/src/kernel/nv2a_pb_exec.c
+index a513bc7..2ae8468 100644
+--- a/src/kernel/nv2a_pb_exec.c
++++ b/src/kernel/nv2a_pb_exec.c
+@@ -3752,8 +3752,14 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
+      * semaphore word; SET_SEMAPHORE_OFFSET is not added (in X-Men Legends it
+      * held 0xFF000000 at times, which put the write outside guest memory). */
+     if (subch == 0 && method == 0x1D70 && s_sem_va) {
++        static unsigned sem_reports;
+         uint8_t *mem = (uint8_t *)xbox_GetMemoryOffset();
+         *(volatile uint32_t *)(mem + s_sem_va) = param;
++        if (sem_reports++ < 8) {
++            fprintf(stderr, "  [GPU] semaphore release 0x%08X = 0x%08X\n",
++                    s_sem_va, param);
++            fflush(stderr);
++        }
+         return;
+     }
+     if (!inited) {
+diff --git a/src/kernel/xbox_memory_layout.c b/src/kernel/xbox_memory_layout.c
+index b723a92..c35df6b 100644
+--- a/src/kernel/xbox_memory_layout.c
++++ b/src/kernel/xbox_memory_layout.c
+@@ -843,17 +843,19 @@ extern bool apu_hook_handle_mmio_posix(void *ucv, uintptr_t fault_addr,
+  * 0. */
+ int xbox_PosixMmioFault(void *ucv, uintptr_t fault)
+ {
+-#if defined(__aarch64__)
++#if defined(__aarch64__) || (defined(__linux__) && defined(__x86_64__))
+     uint32_t va;
+ 
+     if (!mmio_fault_va(fault, &va))
+         return 0;
++#if defined(__aarch64__)
+     /* The APU decodes the direction from the opcode; is_write is advisory. */
+     if (va >= MMIO_APU_BASE && va < MMIO_APU_END)
+         return g_apu_state
+             && apu_hook_handle_mmio_posix(ucv, fault, va, 0);
+     if (xbox_Ac97PosixFault(ucv, fault))
+         return 1;
++#endif
+     if (xbox_OhciOwnsAddress(va))
+         return xbox_OhciHandleMmio(ucv, va);
+ #else
+@@ -2624,7 +2626,21 @@ BOOL xbox_MemoryLayoutInit(const void *xbe_data, size_t xbe_size)
+             g_span_size = (size_t)1 << 32;
+             g_span_whole_window = 1;
+         }
+-        g_span_base = VirtualAlloc(NULL, g_span_size, MEM_RESERVE, PAGE_NOACCESS);
++        /* Keep the guest's full 32-bit address space representable by host
++         * pointers on Linux x86-64. An OS-chosen top-down base can land near
++         * 0x7fff..., where adding guest apertures such as 0x80000000 or
++         * 0xFD000000 crosses the x86-64 canonical-address boundary. The
++         * individual mappings then fail (or a later guest access faults).
++         * Reserve the span at 4 GiB first; MAP_FIXED_NOREPLACE in the POSIX
++         * VirtualAlloc shim makes this a safe hint that never clobbers an
++         * existing mapping. If another process mapping occupies it, retain
++         * the existing OS-chosen fallback below. */
++#if defined(__linux__) && defined(__x86_64__)
++        g_span_base = VirtualAlloc((LPVOID)(uintptr_t)0x100000000ull,
++                                   g_span_size, MEM_RESERVE, PAGE_NOACCESS);
++#endif
++        if (!g_span_base)
++            g_span_base = VirtualAlloc(NULL, g_span_size, MEM_RESERVE, PAGE_NOACCESS);
+         if (g_span_base) {
+             VirtualFree(g_span_base, g_memory_size, MEM_RELEASE);
+             g_memory_base = MapViewOfFileEx(g_mapping_handle,
+diff --git a/src/nv2a/nv2a_pb_replay.c b/src/nv2a/nv2a_pb_replay.c
+index a4f1083..ee8e356 100644
+--- a/src/nv2a/nv2a_pb_replay.c
++++ b/src/nv2a/nv2a_pb_replay.c
+@@ -272,14 +272,14 @@ void nv2a_pb_replay_frame(void)
+     uint32_t dwords = menu_pb_dwords[g_current_menu];
+ 
+     if (pb && dwords > 0) {
++#define CHYRON_BEGIN_DWORD  6175
++#define CHYRON_END_DWORD    7455
++#define CHYRON_INLINE_DATA  6178
++#define CHYRON_INLINE_COUNT 1275
+         /* For the main menu, use the original data with chyron handling */
+-        if (g_current_menu == MENU_MAIN) {
++        if (g_current_menu == MENU_MAIN &&
++            MENU_PB_DWORDS > CHYRON_END_DWORD + CHYRON_INLINE_COUNT) {
+             /* Replay in segments, skipping chyron (Draw 5) for re-draw with scroll */
+-            #define CHYRON_BEGIN_DWORD  6175
+-            #define CHYRON_END_DWORD    7455
+-            #define CHYRON_INLINE_DATA  6178
+-            #define CHYRON_INLINE_COUNT 1275
+-
+             replay_pushbuffer(menu_pushbuffer_data, CHYRON_BEGIN_DWORD);
+             replay_pushbuffer(&menu_pushbuffer_data[CHYRON_END_DWORD],
+                               MENU_PB_DWORDS - CHYRON_END_DWORD);
+diff --git a/src/platform/mmio_decode.h b/src/platform/mmio_decode.h
+index 1916156..72f3387 100644
+--- a/src/platform/mmio_decode.h
++++ b/src/platform/mmio_decode.h
+@@ -5,7 +5,7 @@
+  * have to be answered and the writes have to be seen. The way that works here
+  * is to leave the page PAGE_NOACCESS, catch the access in a vectored handler,
+  * decode the faulting instruction, service it against the device model, and
+- * step over it.
++ * step over it. Linux x86-64 adapts ucontext_t through the same decoder.
+  *
+  * That decoder existed twice before this file -- once in nv2a_mmio_hook.c and
+  * once in apu_mmio_hook.c -- as the same opcode table written out against two
+@@ -28,16 +28,27 @@
+ #ifndef MMIO_DECODE_H
+ #define MMIO_DECODE_H
+ 
++#include <stddef.h>
+ #include <stdint.h>
+ 
++#if defined(_WIN32) || (defined(__linux__) && defined(__x86_64__))
+ #if defined(_WIN32)
+ #include <windows.h>
++typedef CONTEXT mmio_x64_context;
++#else
++#include <ucontext.h>
++typedef struct {
++    uint64_t Rax, Rcx, Rdx, Rbx, Rsp, Rbp, Rsi, Rdi;
++    uint64_t R8, R9, R10, R11, R12, R13, R14, R15;
++    uint64_t Rip, EFlags;
++} mmio_x64_context;
++#endif
+ 
+ /* Service one register access. dev is passed straight back to the callbacks. */
+ typedef uint64_t (*mmio_read_fn)(void *dev, uint32_t off, int size);
+ typedef void     (*mmio_write_fn)(void *dev, uint32_t off, uint64_t val, int size);
+ 
+-static inline uint64_t *mmio_ctx_reg(PCONTEXT c, int reg)
++static inline uint64_t *mmio_ctx_reg(mmio_x64_context *c, int reg)
+ {
+     switch (reg & 0xF) {
+     case 0:  return (uint64_t *)&c->Rax;   case 1:  return (uint64_t *)&c->Rcx;
+@@ -80,7 +91,7 @@ static inline uint64_t mmio_size_mask(int size)
+ /* a OP b at the given width, with the flags a following jcc reads: ZF, SF, CF
+  * and OF. PF and AF are left alone; nothing branches on them after a register
+  * read. The logical operations clear CF and OF, as the hardware does. */
+-static inline uint64_t mmio_alu(PCONTEXT ctx, int op, uint64_t a, uint64_t b,
++static inline uint64_t mmio_alu(mmio_x64_context *ctx, int op, uint64_t a, uint64_t b,
+                                 int size)
+ {
+     uint64_t m = mmio_size_mask(size), sign = 1ULL << (size * 8 - 1), r;
+@@ -112,7 +123,7 @@ static inline uint64_t mmio_alu(PCONTEXT ctx, int op, uint64_t a, uint64_t b,
+ 
+ /* A general register at an operand width. Without a REX prefix, byte
+  * registers 4-7 are AH, CH, DH and BH -- bits 15:8 of registers 0-3. */
+-static inline uint64_t mmio_get_reg(PCONTEXT c, int reg, int size, int has_rex)
++static inline uint64_t mmio_get_reg(mmio_x64_context *c, int reg, int size, int has_rex)
+ {
+     if (size == 1 && !has_rex && reg >= 4 && reg < 8)
+         return (*mmio_ctx_reg(c, reg - 4) >> 8) & 0xFF;
+@@ -121,7 +132,7 @@ static inline uint64_t mmio_get_reg(PCONTEXT c, int reg, int size, int has_rex)
+ 
+ /* Write with x86-64 width rules: a 32-bit write zeroes bits 63:32, an 8- or
+  * 16-bit write merges into what was there. */
+-static inline void mmio_set_reg(PCONTEXT c, int reg, uint64_t v, int size,
++static inline void mmio_set_reg(mmio_x64_context *c, int reg, uint64_t v, int size,
+                                 int has_rex)
+ {
+     uint64_t *d;
+@@ -159,7 +170,7 @@ static inline uint64_t mmio_imm(const uint8_t *p, int size, int *len)
+  * once; a memory-destination form reads, then writes (CMP and TEST only
+  * read). ADC/SBB, the rest of F6/F7 (NOT/NEG/MUL/DIV), string moves and
+  * anything else return 0. */
+-static inline int mmio_emulate(PCONTEXT ctx, uint32_t off, void *dev,
++static inline int mmio_emulate(mmio_x64_context *ctx, uint32_t off, void *dev,
+                                mmio_read_fn rd, mmio_write_fn wr)
+ {
+     const uint8_t *ip = (const uint8_t *)ctx->Rip;
+@@ -290,5 +301,32 @@ static inline int mmio_emulate(PCONTEXT ctx, uint32_t off, void *dev,
+     }
+ }
+ 
+-#endif /* _WIN32 */
++#if defined(__linux__) && defined(__x86_64__) && !defined(_WIN32)
++static inline int mmio_emulate_posix_x64(ucontext_t *uc, uint32_t off,
++                                         void *dev, mmio_read_fn rd,
++                                         mmio_write_fn wr)
++{
++    mmio_x64_context c;
++    greg_t *g = uc->uc_mcontext.gregs;
++    int ok;
++    c.Rax = g[REG_RAX]; c.Rcx = g[REG_RCX]; c.Rdx = g[REG_RDX];
++    c.Rbx = g[REG_RBX]; c.Rsp = g[REG_RSP]; c.Rbp = g[REG_RBP];
++    c.Rsi = g[REG_RSI]; c.Rdi = g[REG_RDI]; c.R8 = g[REG_R8];
++    c.R9 = g[REG_R9]; c.R10 = g[REG_R10]; c.R11 = g[REG_R11];
++    c.R12 = g[REG_R12]; c.R13 = g[REG_R13]; c.R14 = g[REG_R14];
++    c.R15 = g[REG_R15]; c.Rip = g[REG_RIP]; c.EFlags = g[REG_EFL];
++    ok = mmio_emulate(&c, off, dev, rd, wr);
++    if (ok) {
++        g[REG_RAX] = c.Rax; g[REG_RCX] = c.Rcx; g[REG_RDX] = c.Rdx;
++        g[REG_RBX] = c.Rbx; g[REG_RSP] = c.Rsp; g[REG_RBP] = c.Rbp;
++        g[REG_RSI] = c.Rsi; g[REG_RDI] = c.Rdi; g[REG_R8] = c.R8;
++        g[REG_R9] = c.R9; g[REG_R10] = c.R10; g[REG_R11] = c.R11;
++        g[REG_R12] = c.R12; g[REG_R13] = c.R13; g[REG_R14] = c.R14;
++        g[REG_R15] = c.R15; g[REG_RIP] = c.Rip; g[REG_EFL] = c.EFlags;
++    }
++    return ok;
++}
++#endif
++
++#endif /* x86-64 host */
+ #endif /* MMIO_DECODE_H */
+diff --git a/src/usb/ohci.c b/src/usb/ohci.c
+index efa5046..f1de80e 100644
+--- a/src/usb/ohci.c
++++ b/src/usb/ohci.c
+@@ -1,3 +1,7 @@
++#if !defined(_WIN32) && !defined(_GNU_SOURCE)
++#define _GNU_SOURCE
++#endif
++
+ /*
+  * ohci.c -- OHCI 1.0a host controller registers for the MCPX.
+  *
+@@ -25,6 +29,8 @@
+  * handler. A host with neither leaves the model off (see xbox_OhciInit). */
+ #if defined(_WIN32)
+ #  define OHCI_TRAP_WIN32 1
++#elif defined(__linux__) && defined(__x86_64__)
++#  define OHCI_TRAP_POSIX_X64 1
+ #elif defined(__aarch64__)
+ #  define OHCI_TRAP_POSIX_A64 1
+ #endif
+@@ -636,11 +642,34 @@ static uint32_t ohci_do_td(OhciController *hc, uint32_t ed0, uint32_t td)
+         } else {
+             /* The pad's report, on its interrupt endpoint. */
+             uint8_t rep[32];
++            static int report_trace = -1;
++            static uint8_t last_report[USB_GAMEPAD_MAX][20];
++            static int have_report[USB_GAMEPAD_MAX];
+             s_n_report++;
+             int n = usb_gamepad_report(pad, rep, (int)sizeof rep);
+             if (n > len) n = len;
+-            if (n > 0 && guest_ptr(cbp, (uint32_t)n))
+-                memcpy(guest_ptr(cbp, (uint32_t)n), rep, (size_t)n);
++            if (report_trace < 0)
++                report_trace = getenv("RECOMP_USB_REPORT_TRACE") != NULL;
++            if (n > 0) {
++                uint8_t *dst = (uint8_t *)guest_ptr(cbp, (uint32_t)n);
++                int slot = pad % USB_GAMEPAD_MAX;
++                if (report_trace && n == 20
++                    && (!have_report[slot]
++                        || memcmp(last_report[slot], rep, 20) != 0)) {
++                    int i;
++                    fprintf(stderr, "  [OHCI%d] pad %d report -> guest 0x%08X "
++                                    "copied=%d:", hc->index, pad, cbp,
++                            dst != NULL);
++                    for (i = 0; i < 20; i++)
++                        fprintf(stderr, " %02X", rep[i]);
++                    fputc('\n', stderr);
++                    fflush(stderr);
++                    memcpy(last_report[slot], rep, 20);
++                    have_report[slot] = 1;
++                }
++                if (dst)
++                    memcpy(dst, rep, (size_t)n);
++            }
+             moved = n;
+         }
+     } else {
+@@ -734,8 +763,31 @@ static int ohci_walk_eds(OhciController *hc, uint32_t ed, uint32_t *done_head)
+             && guest_ok(head & ED_PTR_MASK, 16) && ++tguard < 64) {
+             uint32_t td = head & ED_PTR_MASK;
+             uint32_t next = rd32(td + 8) & ED_PTR_MASK;
++            uint32_t cbp_before = rd32(td + 4);
+             uint32_t cc = ohci_do_td(hc, ed0, td);
+ 
++            /* Correlate changed gamepad bytes with the descriptor the guest
++             * just retired. This separates successful DMA into a live TD
++             * from merely preparing a packet in the device model. */
++            if ((ed0 & 0x7Fu) == 1u && ((ed0 >> 7) & 0xFu) == 1u
++                && cbp_before && guest_ok(cbp_before, 20)
++                && getenv("RECOMP_USB_REPORT_TRACE")) {
++                static uint8_t last[20];
++                static int have_last;
++                const uint8_t *payload = guest_ptr(cbp_before, 20);
++                if (payload && (!have_last || memcmp(last, payload, 20) != 0)) {
++                    fprintf(stderr, "  [OHCI%d] HID TD done ed=%08X td=%08X "
++                            "cc=%u cbp=%08X done_prev=%08X data:",
++                            hc->index, ed, td, cc, cbp_before, *done_head);
++                    for (int i = 0; i < 20; i++)
++                        fprintf(stderr, " %02X", payload[i]);
++                    fputc('\n', stderr);
++                    fflush(stderr);
++                    memcpy(last, payload, 20);
++                    have_last = 1;
++                }
++            }
++
+             /* Report the outcome where the driver reads it, then put the
+              * descriptor on the done queue, newest first. */
+             wr32(td, (rd32(td) & 0x0FFFFFFFu) | (cc << 28));
+@@ -836,11 +888,14 @@ static int ohci_run_periodic_list(OhciController *hc, uint32_t *done_head)
+             last = now;
+             fprintf(stderr, "  [OHCI%d] stats: %u periodic transfers; "
+                     "reports %lu setups %lu out0 %lu outN %lu; "
+-                    "ctl=%08X ien=%08X ists=%08X irql-depth=%d",
++                    "ctl=%08X ien=%08X ists=%08X ack=%u hcca-done=%08X irql-depth=%d",
+                     hc->index, total, s_n_report, s_n_ctrl, s_n_out_ep0,
+                     s_n_out_other, hc->reg[HcControl / 4],
+                     hc->reg[HcInterruptEnable / 4],
+-                    hc->reg[HcInterruptStatus / 4], xbox_IrqlRaisedCount());
++                    hc->reg[HcInterruptStatus / 4], hc->ack_seq,
++                    hc->reg[HcHCCA / 4]
++                        ? rd32(hc->reg[HcHCCA / 4] + HCCA_DONE_HEAD) : 0,
++                    xbox_IrqlRaisedCount());
+             {
+                 uint32_t c = hc->reg[HcControlHeadED / 4] & ED_PTR_MASK;
+                 int n;
+@@ -1356,7 +1411,8 @@ void xbox_OhciInit(void)
+         if ((unsigned)s_npads > s_ndp)
+             s_ndp = (unsigned)s_npads;      /* a port for every pad */
+     }
+-#if !defined(OHCI_TRAP_WIN32) && !defined(OHCI_TRAP_POSIX_A64)
++#if !defined(OHCI_TRAP_WIN32) && !defined(OHCI_TRAP_POSIX_A64) \
++    && !defined(OHCI_TRAP_POSIX_X64)
+     /* No decoder for this host's instructions, so a trapped access could not
+      * be answered. Leave the aperture as plain memory -- the title then sees
+      * no controller, exactly as with RECOMP_USB unset -- and say so. */
+@@ -1432,7 +1488,7 @@ int xbox_OhciOwnsAddress(uint32_t xbox_va)
+     return hc_for(xbox_va) != NULL;
+ }
+ 
+-#if defined(OHCI_TRAP_POSIX_A64) || defined(OHCI_TRAP_WIN32)
++#if defined(OHCI_TRAP_POSIX_A64) || defined(OHCI_TRAP_POSIX_X64) || defined(OHCI_TRAP_WIN32)
+ /* Both decoders hand over 8-byte accesses whole (ldr/str x or a d register
+  * on A64, a REX.W mov on x86-64); the registers are 32-bit, so an 8-byte
+  * access is two of them. */
+@@ -1473,6 +1529,25 @@ int xbox_OhciHandleMmio(void *ctx, uint32_t xbox_va)
+         fflush(stderr);
+     }
+     return ok;
++#elif defined(OHCI_TRAP_POSIX_X64)
++    OhciController *hc = hc_for(xbox_va);
++    int ok;
++
++    if (!hc)
++        return 0;
++    ok = mmio_emulate_posix_x64((ucontext_t *)ctx, xbox_va - hc->base, hc,
++                                ohci_read_split, ohci_write_split);
++    if (!ok && hc->decode_fail++ < 20) {
++        ucontext_t *uc = (ucontext_t *)ctx;
++        const uint8_t *ip = (const uint8_t *)(uintptr_t)
++                uc->uc_mcontext.gregs[REG_RIP];
++        fprintf(stderr, "  [OHCI%d] undecoded access at +0x%03X: "
++                        "%02X %02X %02X %02X %02X %02X\n",
++                hc->index, xbox_va - hc->base,
++                ip[0], ip[1], ip[2], ip[3], ip[4], ip[5]);
++        fflush(stderr);
++    }
++    return ok;
+ #elif defined(OHCI_TRAP_WIN32)
+     OhciController *hc = hc_for(xbox_va);
+     int ok;
+diff --git a/src/usb/ohci.h b/src/usb/ohci.h
+index 8aa0b35..c947c80 100644
+--- a/src/usb/ohci.h
++++ b/src/usb/ohci.h
+@@ -33,7 +33,7 @@
+  * RECOMP_USB is set, so a title that was working without a controller keeps
+  * behaving exactly as it did. Call it after the guest memory is mapped.
+  *
+- * The registers are trapped on Windows x86-64 and on POSIX arm64 hosts. On
++ * The registers are trapped on Windows x86-64, POSIX Linux x86-64 and POSIX arm64 hosts. On
+  * any other host the model stays off, with a one-line notice, and the title
+  * sees the aperture as plain memory, as it does with RECOMP_USB unset. */
+ void xbox_OhciInit(void);

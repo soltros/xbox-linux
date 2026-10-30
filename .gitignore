@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.env/
+.direnv/
+build/
+third_party/
+reports/
+result*
+*.xbe
+*.iso
+xbox_kernel.log
