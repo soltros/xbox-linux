@@ -40,7 +40,7 @@ fetch_checked() {
 }
 
 fetch_checked \
-    "https://downloads.sourceforge.net/project/ghidra/Ghidra_12.1.4_build/$GHIDRA_ARCHIVE" \
+    "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/$GHIDRA_ARCHIVE" \
     "$GHIDRA_ZIP" "$GHIDRA_SHA256"
 fetch_checked \
     "https://github.com/XboxDev/ghidra-xbe/releases/download/build-202610161023/$XBE_EXTENSION" \
