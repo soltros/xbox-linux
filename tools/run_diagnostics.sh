@@ -44,6 +44,12 @@ fi
     printf 'graphics_devices:\n'
     if command -v lspci >/dev/null; then lspci 2>/dev/null | grep -Ei 'vga|3d|display' || true
     else echo 'lspci unavailable'; fi
+    printf 'vulkan_devices:\n'
+    if command -v vulkaninfo >/dev/null; then
+        vulkaninfo --summary 2>&1 | sed -n '1,100p' || true
+    else
+        echo 'vulkaninfo unavailable'
+    fi
     printf 'selected_environment:\n'
     for name in RECOMP_FB_WINDOW RECOMP_FB_DUMP RECOMP_FB_WINDOW_DUMP_EVERY RECOMP_HEADLESS \
                 RECOMP_TEX_DUMP RECOMP_TITLE_KEVENTS RECOMP_VBLANK RECOMP_PB_EXEC \
