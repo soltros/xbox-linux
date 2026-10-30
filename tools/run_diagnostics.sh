@@ -25,7 +25,8 @@ log="$out/runtime.log"
 meta="$out/run-info.txt"
 watchdog=${RECOMP_WATCHDOG_SECS:-20}
 limit=${DIAG_TIMEOUT_SECS:-45}
-export RECOMP_FB_DUMP=${RECOMP_FB_DUMP:-"$out/frame-"}
+export RECOMP_FB_DUMP=${RECOMP_FB_DUMP:-"$out/frame-window.bmp"}
+export RECOMP_FB_WINDOW_DUMP_EVERY=${RECOMP_FB_WINDOW_DUMP_EVERY:-600}
 if [[ ${DIAG_DUMP_TEXTURES:-0} == 1 ]]; then
     export RECOMP_TEX_DUMP=${RECOMP_TEX_DUMP:-"$out/texture-"}
 fi
@@ -44,8 +45,9 @@ fi
     if command -v lspci >/dev/null; then lspci 2>/dev/null | grep -Ei 'vga|3d|display' || true
     else echo 'lspci unavailable'; fi
     printf 'selected_environment:\n'
-    for name in RECOMP_FB_WINDOW RECOMP_FB_DUMP RECOMP_TEX_DUMP RECOMP_TITLE_KEVENTS \
-                RECOMP_VBLANK RECOMP_PB_EXEC RECOMP_USB RECOMP_WATCHDOG_SECS \
+    for name in RECOMP_FB_WINDOW RECOMP_FB_DUMP RECOMP_FB_WINDOW_DUMP_EVERY RECOMP_HEADLESS \
+                RECOMP_TEX_DUMP RECOMP_TITLE_KEVENTS RECOMP_VBLANK RECOMP_PB_EXEC \
+                RECOMP_USB RECOMP_WATCHDOG_SECS \
                 RECOMP_PAD_SCRIPT RECOMP_THREAD_TRACE RECOMP_DPC_TRACE; do
         if [[ -v $name ]]; then printf '%s=%s\n' "$name" "${!name}"; fi
     done
@@ -73,7 +75,7 @@ fi
     printf '\noutcome=%s\nprocess_status=%s\n' "$outcome" "$run_status"
     printf 'log_bytes=%s\n' "$(wc -c <"$log")"
     printf 'diagnostic_lines:\n'
-    grep -E '^[[:space:]]*\[BOOT\]|\[AV\] SetDisplayMode|^[[:space:]]*\[GPU\] ([0-9.]+ fps|surface |draws |brightest |[0-9]+ pixels written|rasterised |vertex programs:|fixed-function transform:|batches:)|\[TEXUSE\]|\[TEXDUMP\]|\[(FATAL|WATCHDOG|UNIMPL|NV2A)\]|\[FILE\].*(fonts/.*\.laf|FAILED)|missing at watchdog|native_backtrace|fault_address=' "$log" \
+    grep -E '^[[:space:]]*\[BOOT\]|\[AV\] SetDisplayMode|\[FBWIN\]|^[[:space:]]*\[GPU\] ([0-9.]+ fps|surface |draws |brightest |[0-9]+ pixels written|rasterised |vertex programs:|fixed-function transform:|batches:)|\[TEXUSE\]|\[TEXDUMP\]|\[(FATAL|WATCHDOG|UNIMPL|NV2A)\]|\[FILE\].*(fonts/.*\.laf|FAILED)|missing at watchdog|native_backtrace|fault_address=' "$log" \
         | tail -n 100 || true
     printf 'capture_files:\n'
     captures=$(find "$out" -maxdepth 1 -type f \( -name '*.bmp' -o -name '*.png' \) \
