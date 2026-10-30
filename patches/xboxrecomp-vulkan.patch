@@ -1,8 +1,6 @@
-diff --git a/src/video/CMakeLists.txt b/src/video/CMakeLists.txt
-index 331d2e2..ad6653a 100644
 --- a/src/video/CMakeLists.txt
 +++ b/src/video/CMakeLists.txt
-@@ -21,6 +21,8 @@ else()
+@@ -21,6 +21,8 @@
      # (fb_present_sdl.c), which then also pumps the events the game
      # controllers are read from.
      find_package(SDL2 REQUIRED)
@@ -12,8 +10,6 @@ index 331d2e2..ad6653a 100644
 +    target_sources(xbox_video PRIVATE fb_present_vulkan.c)
 +    target_link_libraries(xbox_video PUBLIC SDL2::SDL2 Vulkan::Vulkan)
  endif()
-diff --git a/src/video/fb_present_sdl.c b/src/video/fb_present_sdl.c
-index a90e3c9..da48b1b 100644
 --- a/src/video/fb_present_sdl.c
 +++ b/src/video/fb_present_sdl.c
 @@ -35,6 +35,7 @@
@@ -24,7 +20,7 @@ index a90e3c9..da48b1b 100644
  #include <pthread.h>
  #include <sched.h>
  #include <stdint.h>
-@@ -335,10 +336,11 @@ int xbox_HostWindowMain(int (*guest_main)(void))
+@@ -335,10 +336,11 @@
      SDL_Window *win;
      SDL_Renderer *ren;
      SDL_Texture *tex = NULL;
@@ -38,13 +34,14 @@ index a90e3c9..da48b1b 100644
  
      /* Ctrl-C and SIGTERM keep their default meaning; SDL would turn them
       * into an SDL_QUIT that a headless run never reads. Set before the
-@@ -353,29 +355,48 @@ int xbox_HostWindowMain(int (*guest_main)(void))
+@@ -353,29 +355,48 @@
      scale = e ? atoi(e) : 2;
      if (scale < 1 || scale > 8)
          scale = 2;
-+    backend = getenv("RECOMP_PRESENT_BACKEND");
- 
+-
 -    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
++    backend = getenv("RECOMP_PRESENT_BACKEND");
++
      if (SDL_Init(FBWIN_SDL_SUBSYSTEMS) != 0) {
          fprintf(stderr, "  [FBWIN] SDL video unavailable (%s); running headless\n",
                  SDL_GetError());
@@ -57,8 +54,6 @@ index a90e3c9..da48b1b 100644
 -                                   vsync ? SDL_RENDERER_PRESENTVSYNC : 0)
 -              : NULL;
 -    if (!ren) {
--        fprintf(stderr, "  [FBWIN] SDL window/renderer failed (%s); running headless\n",
--                SDL_GetError());
 +    win = NULL;
 +    ren = NULL;
 +    if (!backend || strcmp(backend, "sdl") != 0)
@@ -71,8 +66,8 @@ index a90e3c9..da48b1b 100644
 +        use_vulkan = 1;
 +        fprintf(stderr, "  [FBWIN] framebuffer window uses Vulkan swapchain presenter\n");
 +    } else {
-         if (win)
-             SDL_DestroyWindow(win);
++        if (win)
++            SDL_DestroyWindow(win);
 +        if (!backend || strcmp(backend, "sdl") != 0)
 +            fprintf(stderr, "  [FBWIN] Vulkan unavailable; falling back to SDL renderer\n");
 +        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
@@ -84,8 +79,10 @@ index a90e3c9..da48b1b 100644
 +                  : NULL;
 +    }
 +    if (!win || (!use_vulkan && !ren)) {
-+        fprintf(stderr, "  [FBWIN] SDL window/renderer failed (%s); running headless\n",
-+                SDL_GetError());
+         fprintf(stderr, "  [FBWIN] SDL window/renderer failed (%s); running headless\n",
+                 SDL_GetError());
+-        if (win)
+-            SDL_DestroyWindow(win);
 +        xbox_vk_presenter_destroy(vk);
 +        if (ren) SDL_DestroyRenderer(ren);
 +        if (win) SDL_DestroyWindow(win);
@@ -99,7 +96,7 @@ index a90e3c9..da48b1b 100644
          SDL_RendererInfo ri;
          if (SDL_GetRendererInfo(ren, &ri) == 0)
              fprintf(stderr, "  [FBWIN] framebuffer window open (%ux%u, SDL %s renderer,"
-@@ -386,7 +407,8 @@ int xbox_HostWindowMain(int (*guest_main)(void))
+@@ -386,7 +407,8 @@
      s_guest_done_event = SDL_RegisterEvents(2);
      if (s_guest_done_event == (Uint32)-1) {
          fprintf(stderr, "  [FBWIN] SDL_RegisterEvents failed; running headless\n");
@@ -109,7 +106,7 @@ index a90e3c9..da48b1b 100644
          SDL_DestroyWindow(win);
          SDL_QuitSubSystem(FBWIN_SDL_SUBSYSTEMS);
          return guest_main();
-@@ -402,7 +424,8 @@ int xbox_HostWindowMain(int (*guest_main)(void))
+@@ -402,7 +424,8 @@
          fprintf(stderr, "  [FBWIN] cannot start the guest thread; running headless\n");
          s_running = 0;
          xbox_InputSetMainPump(0);
@@ -119,7 +116,7 @@ index a90e3c9..da48b1b 100644
          SDL_DestroyWindow(win);
          SDL_QuitSubSystem(FBWIN_SDL_SUBSYSTEMS);
          return guest_main();
-@@ -458,7 +481,9 @@ int xbox_HostWindowMain(int (*guest_main)(void))
+@@ -458,7 +481,9 @@
              if (bpp == 2 || bpp == 4)
                  px = (const uint8_t *)((uintptr_t)s_fb_va + xbox_GetMemoryOffset());
          }
@@ -130,7 +127,7 @@ index a90e3c9..da48b1b 100644
              if (!tex || bpp != tex_bpp) {
                  if (tex)
                      SDL_DestroyTexture(tex);
-@@ -470,15 +495,19 @@ int xbox_HostWindowMain(int (*guest_main)(void))
+@@ -470,15 +495,19 @@
              }
              if (tex)
                  SDL_UpdateTexture(tex, NULL, px, (int)pitch);
@@ -156,7 +153,7 @@ index a90e3c9..da48b1b 100644
              if (new_frame) {
                  static uint64_t frames;
                  const char *dump = getenv("RECOMP_FB_DUMP");
-@@ -522,7 +551,8 @@ int xbox_HostWindowMain(int (*guest_main)(void))
+@@ -522,7 +551,8 @@
       * start calling SDL_GameControllerUpdate while SDL goes down. */
      if (tex)
          SDL_DestroyTexture(tex);
@@ -166,12 +163,9 @@ index a90e3c9..da48b1b 100644
      SDL_DestroyWindow(win);
      if (!xbox_InputAnyOpen())
          SDL_Quit();
-diff --git a/src/video/fb_present_vulkan.c b/src/video/fb_present_vulkan.c
-new file mode 100644
-index 0000000..ff46a16
---- /dev/null
+--- a/src/video/fb_present_vulkan.c
 +++ b/src/video/fb_present_vulkan.c
-@@ -0,0 +1,360 @@
+@@ -0,0 +1,427 @@
 +#include "fb_present_vulkan.h"
 +
 +#include <SDL_vulkan.h>
@@ -200,6 +194,9 @@ index 0000000..ff46a16
 +    VkBuffer staging;
 +    VkDeviceMemory staging_memory;
 +    uint8_t *mapped;
++    VkImage source_image;
++    VkDeviceMemory source_memory;
++    VkImageLayout source_layout;
 +    VkCommandPool command_pool;
 +    VkCommandBuffer command;
 +    VkSemaphore acquired;
@@ -240,6 +237,8 @@ index 0000000..ff46a16
 +    if (p->device && p->acquired) vkDestroySemaphore(p->device, p->acquired, NULL);
 +    if (p->device && p->complete) vkDestroySemaphore(p->device, p->complete, NULL);
 +    if (p->device && p->command_pool) vkDestroyCommandPool(p->device, p->command_pool, NULL);
++    if (p->device && p->source_image) vkDestroyImage(p->device, p->source_image, NULL);
++    if (p->device && p->source_memory) vkFreeMemory(p->device, p->source_memory, NULL);
 +    if (p->device && p->staging) vkDestroyBuffer(p->device, p->staging, NULL);
 +    if (p->device && p->staging_memory) vkFreeMemory(p->device, p->staging_memory, NULL);
 +    if (p->device && p->swapchain) vkDestroySwapchainKHR(p->device, p->swapchain, NULL);
@@ -351,6 +350,16 @@ index 0000000..ff46a16
 +        fprintf(stderr, "  [VULKAN] no supported 8-bit swapchain format\n");
 +        goto fail;
 +    }
++    {
++        VkFormatProperties fp;
++        vkGetPhysicalDeviceFormatProperties(p->physical, p->format, &fp);
++        if ((fp.optimalTilingFeatures & (VK_FORMAT_FEATURE_BLIT_SRC_BIT
++                                         | VK_FORMAT_FEATURE_BLIT_DST_BIT))
++                != (VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT)) {
++            fprintf(stderr, "  [VULKAN] swapchain format cannot be scaled with an image blit\n");
++            goto fail;
++        }
++    }
 +    if (!vk_ok(vkGetPhysicalDeviceSurfacePresentModesKHR(p->physical, p->surface,
 +                                                         &mode_count, NULL), "present modes")) goto fail;
 +    modes = calloc(mode_count, sizeof *modes);
@@ -402,7 +411,7 @@ index 0000000..ff46a16
 +                                                 &p->image_count, p->images), "swapchain images")) goto fail;
 +    {
 +        VkBufferCreateInfo bi = { .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-+            .size = (VkDeviceSize)p->extent.width * p->extent.height * 4,
++            .size = (VkDeviceSize)FB_WIDTH * FB_HEIGHT * 4,
 +            .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE };
 +        VkMemoryRequirements req;
 +        VkMemoryAllocateInfo ai = { .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
@@ -416,6 +425,27 @@ index 0000000..ff46a16
 +        if (!vk_ok(vkAllocateMemory(p->device, &ai, NULL, &p->staging_memory), "staging memory")
 +            || !vk_ok(vkBindBufferMemory(p->device, p->staging, p->staging_memory, 0), "bind staging")
 +            || !vk_ok(vkMapMemory(p->device, p->staging_memory, 0, bi.size, 0, (void **)&p->mapped), "map staging")) goto fail;
++    }
++    {
++        VkImageCreateInfo ii = { .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
++            .imageType = VK_IMAGE_TYPE_2D, .format = p->format,
++            .extent = { FB_WIDTH, FB_HEIGHT, 1 }, .mipLevels = 1, .arrayLayers = 1,
++            .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
++            .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
++            .sharingMode = VK_SHARING_MODE_EXCLUSIVE, .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
++        VkMemoryRequirements req;
++        VkMemoryAllocateInfo ai = { .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
++        uint32_t mt;
++        if (!vk_ok(vkCreateImage(p->device, &ii, NULL, &p->source_image), "source image")) goto fail;
++        vkGetImageMemoryRequirements(p->device, p->source_image, &req);
++        mt = memory_type(p->physical, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
++        if (mt == UINT32_MAX) {
++            fprintf(stderr, "  [VULKAN] no device-local memory for framebuffer image\n");
++            goto fail;
++        }
++        ai.allocationSize = req.size; ai.memoryTypeIndex = mt;
++        if (!vk_ok(vkAllocateMemory(p->device, &ai, NULL, &p->source_memory), "source image memory")
++            || !vk_ok(vkBindImageMemory(p->device, p->source_image, p->source_memory, 0), "bind source image")) goto fail;
 +    }
 +    {
 +        VkCommandPoolCreateInfo pi = { .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -464,8 +494,20 @@ index 0000000..ff46a16
 +        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 +        .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
 +        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT };
++    VkImageMemoryBarrier source_to_copy = { .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
++        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
++        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
++        .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT };
++    VkImageMemoryBarrier source_to_blit = { .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
++        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
++        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
++        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
++        .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT };
 +    VkBufferImageCopy copy = { .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
-+        .imageExtent = { 0, 0, 1 } };
++        .imageExtent = { FB_WIDTH, FB_HEIGHT, 1 } };
 +    VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 +    VkSubmitInfo submit = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO };
 +    VkPresentInfoKHR present = { .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
@@ -484,16 +526,14 @@ index 0000000..ff46a16
 +    present.swapchainCount = 1;
 +    present.pSwapchains = &p->swapchain;
 +    present.pImageIndices = &image_index;
-+    for (y = 0; y < p->extent.height; y++) {
-+        uint32_t sy = (uint64_t)y * FB_HEIGHT / p->extent.height;
-+        for (x = 0; x < p->extent.width; x++) {
-+            uint32_t sx = (uint64_t)x * FB_WIDTH / p->extent.width;
-+            uint8_t red, green, blue, *d = p->mapped + ((size_t)y * p->extent.width + x) * 4;
++    for (y = 0; y < FB_HEIGHT; y++) {
++        for (x = 0; x < FB_WIDTH; x++) {
++            uint8_t red, green, blue, *d = p->mapped + ((size_t)y * FB_WIDTH + x) * 4;
 +            if (bpp == 4) {
-+                uint32_t v; memcpy(&v, pixels + (size_t)sy * pitch + (size_t)sx * 4, 4);
++                uint32_t v; memcpy(&v, pixels + (size_t)y * pitch + (size_t)x * 4, 4);
 +                red = (uint8_t)(v >> 16); green = (uint8_t)(v >> 8); blue = (uint8_t)v;
 +            } else {
-+                uint16_t v; memcpy(&v, pixels + (size_t)sy * pitch + (size_t)sx * 2, 2);
++                uint16_t v; memcpy(&v, pixels + (size_t)y * pitch + (size_t)x * 2, 2);
 +                red = (uint8_t)(((v >> 11) & 31) * 255 / 31);
 +                green = (uint8_t)(((v >> 5) & 63) * 255 / 63);
 +                blue = (uint8_t)((v & 31) * 255 / 31);
@@ -512,18 +552,39 @@ index 0000000..ff46a16
 +    to_copy.image = p->images[image_index];
 +    to_copy.oldLayout = p->layouts[image_index] ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_UNDEFINED;
 +    to_copy.srcAccessMask = 0;
++    source_to_copy.image = p->source_image;
++    source_to_copy.oldLayout = p->source_layout ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
++                                                 : VK_IMAGE_LAYOUT_UNDEFINED;
++    source_to_copy.srcAccessMask = p->source_layout ? VK_ACCESS_TRANSFER_READ_BIT : 0;
 +    vkCmdPipelineBarrier(p->command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
 +        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &to_copy);
++    vkCmdPipelineBarrier(p->command,
++        p->source_layout ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
++        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &source_to_copy);
 +    copy.bufferOffset = 0; copy.bufferRowLength = 0; copy.bufferImageHeight = 0;
 +    copy.imageOffset = (VkOffset3D){0, 0, 0};
-+    copy.imageExtent = (VkExtent3D){p->extent.width, p->extent.height, 1};
-+    vkCmdCopyBufferToImage(p->command, p->staging, p->images[image_index],
++    vkCmdCopyBufferToImage(p->command, p->staging, p->source_image,
 +                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
++    source_to_blit.image = p->source_image;
++    vkCmdPipelineBarrier(p->command, VK_PIPELINE_STAGE_TRANSFER_BIT,
++        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &source_to_blit);
++    {
++        VkImageBlit blit = {
++            .srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
++            .srcOffsets = { { 0, 0, 0 }, { FB_WIDTH, FB_HEIGHT, 1 } },
++            .dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
++            .dstOffsets = { { 0, 0, 0 }, { (int32_t)p->extent.width, (int32_t)p->extent.height, 1 } }
++        };
++        vkCmdBlitImage(p->command, p->source_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++                       p->images[image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
++                       1, &blit, VK_FILTER_NEAREST);
++    }
 +    to_present.image = p->images[image_index];
 +    vkCmdPipelineBarrier(p->command, VK_PIPELINE_STAGE_TRANSFER_BIT,
 +        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, NULL, 0, NULL, 1, &to_present);
 +    if (!vk_ok(vkEndCommandBuffer(p->command), "end command buffer")
 +        || !vk_ok(vkQueueSubmit(p->queue, 1, &submit, p->fence), "submit frame")) return 0;
++    p->source_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 +    p->layouts[image_index] = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 +    r = vkQueuePresentKHR(p->queue, &present);
 +    if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) { vk_ok(r, "present frame"); return 0; }
@@ -532,10 +593,7 @@ index 0000000..ff46a16
 +    if (!vk_ok(vkQueueWaitIdle(p->queue), "wait presentation queue")) return 0;
 +    return 1;
 +}
-diff --git a/src/video/fb_present_vulkan.h b/src/video/fb_present_vulkan.h
-new file mode 100644
-index 0000000..0de86c7
---- /dev/null
+--- a/src/video/fb_present_vulkan.h
 +++ b/src/video/fb_present_vulkan.h
 @@ -0,0 +1,14 @@
 +#ifndef XBOX_FB_PRESENT_VULKAN_H

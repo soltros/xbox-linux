@@ -21,7 +21,9 @@ it is not Vulkan rendering and its current menu output is visibly incorrect.
    headless CI where possible.
 2. **Vulkan presentation (initial implementation).** The Linux presenter now
    tries an SDL Vulkan surface, swapchain, and explicit frame synchronization
-   first, uploading the CPU-rendered Xbox framebuffer. It falls back to SDL's
+   first. It uploads the 640x480 framebuffer and scales it to the swapchain
+   with a nearest-neighbor Vulkan image blit, rather than expanding every
+   output pixel on the CPU. It falls back to SDL's
    renderer if Vulkan setup fails. This isolates window, synchronization, and
    color-format issues from GPU emulation; resize recovery and validation-layer
    checks remain to be completed. Set `RECOMP_PRESENT_BACKEND=sdl` for a
