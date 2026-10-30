@@ -26,7 +26,7 @@ meta="$out/run-info.txt"
 watchdog=${RECOMP_WATCHDOG_SECS:-20}
 limit=${DIAG_TIMEOUT_SECS:-45}
 export RECOMP_FB_DUMP=${RECOMP_FB_DUMP:-"$out/frame-window.bmp"}
-export RECOMP_FB_WINDOW_DUMP_EVERY=${RECOMP_FB_WINDOW_DUMP_EVERY:-600}
+export RECOMP_FB_WINDOW_DUMP_EVERY=${RECOMP_FB_WINDOW_DUMP_EVERY:-30}
 if [[ ${DIAG_DUMP_TEXTURES:-0} == 1 ]]; then
     export RECOMP_TEX_DUMP=${RECOMP_TEX_DUMP:-"$out/texture-"}
 fi

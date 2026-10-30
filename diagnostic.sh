@@ -46,5 +46,8 @@ export RECOMP_VBLANK=${RECOMP_VBLANK:-paced}
 export RECOMP_PB_EXEC=${RECOMP_PB_EXEC:-1}
 export RECOMP_USB=${RECOMP_USB:-1}
 export RECOMP_WATCHDOG_SECS=${RECOMP_WATCHDOG_SECS:-28}
+# Capture enough graphics context in the standard Obi-Wan bundle to diagnose
+# missing or malformed UI without requiring a second diagnostic run.
+export DIAG_DUMP_TEXTURES=${DIAG_DUMP_TEXTURES:-1}
 
 exec "$root/tools/run_diagnostics.sh" "$exe" "$game" "$save" "$@"
