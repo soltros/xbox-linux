@@ -49,7 +49,7 @@ def main():
             'framework_checkout':str(dest) if dest.is_dir() else None,'framework_expected_revision':lock['revision'],
             'packages':{},'scope':'Environment probe only; no claim of a build or game compatibility.'}
     if shutil.which('pkg-config'):
-        for package in ['sdl2','epoxy','openssl','libavcodec','libavformat','libavutil','libswscale']:
+        for package in ['sdl2','epoxy','vulkan','shaderc','openssl','libavcodec','libavformat','libavutil','libswscale']:
             proc=subprocess.run(['pkg-config','--modversion',package],capture_output=True,text=True)
             result['packages'][package]=proc.stdout.strip() if proc.returncode==0 else None
     (ROOT/'reports').mkdir(exist_ok=True)

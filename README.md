@@ -27,11 +27,11 @@ The generated C preserves guest CPU state in runtime-managed registers and guest
 
 The pinned framework includes the common host and Xbox-facing components used by title builds: guest memory layout and address conversion; kernel import bridges, thread and synchronization support, and Xbox path/file handling; host-window/video and audio integration; and Xbox graphics/device code, including NV2A pushbuffer processing and USB OHCI support. The Linux patch in this repository adapts framework behavior that the title work has needed on Linux x86-64. In particular, it adds safe guest address-space placement, x86-64 MMIO fault decoding for the OHCI model, case-insensitive resolution of existing Xbox-style paths on case-sensitive Linux filesystems, and bounded opt-in thread/DPC diagnostics.
 
-The GPU path is still under development. It can process real title command streams, but the current implementation reports unhandled NV2A methods and is not a complete GPU implementation. A successful compile or a rendered splash/menu frame is evidence for that particular path only; it does not establish full visual correctness or gameplay compatibility.
+The GPU path is still under development. It can process real title command streams, but the current implementation reports unhandled NV2A methods and is not a complete GPU implementation. Vulkan is the graphics target for this runtime and future title projects. The present host NV2A path transforms and rasterizes on the CPU, and SDL currently presents its framebuffer through the host SDL renderer; adding Vulkan only at the window boundary would not implement Xbox GPU behavior or fix incorrect title rendering. See [the Vulkan migration plan](docs/VULKAN-MIGRATION.md) for scope and validation gates. A successful compile or a rendered splash/menu frame is evidence for that particular path only; it does not establish full visual correctness or gameplay compatibility.
 
 ## Install and build
 
-Requirements: x86-64 Linux, Git, and Nix with flakes enabled. The flake pins the Nixpkgs revision and provides CMake, Ninja, compilers/debug tools, Python with Capstone/Pytest, SDL2, OpenGL/Epoxy, OpenSSL, and FFmpeg development dependencies.
+Requirements: x86-64 Linux, Git, and Nix with flakes enabled. The flake pins the Nixpkgs revision and provides CMake, Ninja, compilers/debug tools, Python with Capstone/Pytest, SDL2, Vulkan headers/loader/tools/validation layers and shaderc, plus the current OpenGL/Epoxy transition dependencies, OpenSSL, and FFmpeg development dependencies.
 
 The normal one-command setup fetches the exact upstream revision in `toolchain.json`, applies the local Linux patch, configures the framework, and builds it:
 
