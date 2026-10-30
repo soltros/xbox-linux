@@ -73,8 +73,12 @@ fi
     printf '\noutcome=%s\nprocess_status=%s\n' "$outcome" "$run_status"
     printf 'log_bytes=%s\n' "$(wc -c <"$log")"
     printf 'diagnostic_lines:\n'
-    grep -E '\[(FATAL|WATCHDOG|UNIMPL|GPU|NV2A|OHCI|FILE|PAD|BOOT|TEXDUMP)\]|missing at watchdog|native_backtrace|fault_address=' "$log" \
-        | tail -n 160 || true
+    grep -E '^[[:space:]]*\[BOOT\]|\[AV\] SetDisplayMode|^[[:space:]]*\[GPU\] ([0-9.]+ fps|surface |draws |brightest |[0-9]+ pixels written|rasterised |vertex programs:|fixed-function transform:|batches:)|\[TEXUSE\]|\[TEXDUMP\]|\[(FATAL|WATCHDOG|UNIMPL|NV2A)\]|\[FILE\].*(fonts/.*\.laf|FAILED)|missing at watchdog|native_backtrace|fault_address=' "$log" \
+        | tail -n 100 || true
+    printf 'capture_files:\n'
+    captures=$(find "$out" -maxdepth 1 -type f \( -name '*.bmp' -o -name '*.png' \) \
+        -printf '  %f (%s bytes)\n')
+    if [[ -n $captures ]]; then printf '%s\n' "$captures"; else echo '  none'; fi
 } >"$out/summary.txt"
 
 tar -czf "$out.tar.gz" -C "$(dirname "$out")" "$(basename "$out")"
