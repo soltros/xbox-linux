@@ -27,7 +27,7 @@ The generated C preserves guest CPU state in runtime-managed registers and guest
 
 The pinned framework includes the common host and Xbox-facing components used by title builds: guest memory layout and address conversion; kernel import bridges, thread and synchronization support, and Xbox path/file handling; host-window/video and audio integration; and Xbox graphics/device code, including NV2A pushbuffer processing and USB OHCI support. The Linux patch in this repository adapts framework behavior that the title work has needed on Linux x86-64. In particular, it adds safe guest address-space placement, x86-64 MMIO fault decoding for the OHCI model, case-insensitive resolution of existing Xbox-style paths on case-sensitive Linux filesystems, and bounded opt-in thread/DPC diagnostics.
 
-The GPU path is still under development. It can process real title command streams, but the current implementation reports unhandled NV2A methods and is not a complete GPU implementation. Vulkan is the graphics target for this runtime and future title projects. The present host NV2A path transforms and rasterizes on the CPU, and SDL currently presents its framebuffer through the host SDL renderer; adding Vulkan only at the window boundary would not implement Xbox GPU behavior or fix incorrect title rendering. See [the Vulkan migration plan](docs/VULKAN-MIGRATION.md) for scope and validation gates. A successful compile or a rendered splash/menu frame is evidence for that particular path only; it does not establish full visual correctness or gameplay compatibility.
+The GPU path is still under development. It can process real title command streams, but the current implementation reports unhandled NV2A methods and is not a complete GPU implementation. Vulkan is the graphics target for this runtime and future title projects. The Linux window now tries a Vulkan swapchain presenter first and falls back to SDL's renderer if Vulkan initialization fails. NV2A commands are still transformed and rasterized on the CPU, so this presentation change does not implement Xbox GPU behavior or by itself fix incorrect title rendering. See [the Vulkan migration plan](docs/VULKAN-MIGRATION.md) for scope and validation gates. A successful compile or a rendered splash/menu frame is evidence for that particular path only; it does not establish full visual correctness or gameplay compatibility.
 
 ## Install and build
 
@@ -41,7 +41,7 @@ cd xbox-linux
 ./tools/install_runtime.sh
 ```
 
-The fetched framework is placed in ignored `third_party/xboxrecomp/`; CMake output is placed in ignored `build/runtime/`. These are local build dependencies, not vendored files in this repository. The installer accepts `JOBS=8` to set build parallelism.
+The fetched framework is placed in ignored `third_party/xboxrecomp/`; CMake output is placed in ignored `build/runtime/`. These are local build dependencies, not vendored files in this repository. The toolchain applies the common Linux compatibility patch and then the Vulkan presenter patch. The installer accepts `JOBS=8` to set build parallelism.
 
 For individual steps or diagnosis:
 

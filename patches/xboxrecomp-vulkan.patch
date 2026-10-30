@@ -1,0 +1,554 @@
+diff --git a/src/video/CMakeLists.txt b/src/video/CMakeLists.txt
+index 331d2e2..ad6653a 100644
+--- a/src/video/CMakeLists.txt
++++ b/src/video/CMakeLists.txt
+@@ -21,6 +21,8 @@ else()
+     # (fb_present_sdl.c), which then also pumps the events the game
+     # controllers are read from.
+     find_package(SDL2 REQUIRED)
++    find_package(Vulkan REQUIRED)
+     target_sources(xbox_video PRIVATE fb_present_sdl.c)
+-    target_link_libraries(xbox_video PUBLIC SDL2::SDL2)
++    target_sources(xbox_video PRIVATE fb_present_vulkan.c)
++    target_link_libraries(xbox_video PUBLIC SDL2::SDL2 Vulkan::Vulkan)
+ endif()
+diff --git a/src/video/fb_present_sdl.c b/src/video/fb_present_sdl.c
+index a90e3c9..da48b1b 100644
+--- a/src/video/fb_present_sdl.c
++++ b/src/video/fb_present_sdl.c
+@@ -35,6 +35,7 @@
+ #if !defined(_WIN32)
+ 
+ #include <SDL.h>
++#include "fb_present_vulkan.h"
+ #include <pthread.h>
+ #include <sched.h>
+ #include <stdint.h>
+@@ -335,10 +336,11 @@ int xbox_HostWindowMain(int (*guest_main)(void))
+     SDL_Window *win;
+     SDL_Renderer *ren;
+     SDL_Texture *tex = NULL;
++    xbox_vk_presenter *vk = NULL;
+     uint32_t tex_bpp = 0;
+     uint64_t shown_seq = 0, t_title = 0, flips_title = 0;
+-    const char *e;
+-    int vsync, scale, quit = 0, guest_done = 0, dirty = 1;
++    const char *e, *backend;
++    int vsync, scale, quit = 0, guest_done = 0, dirty = 1, use_vulkan = 0;
+ 
+     /* Ctrl-C and SIGTERM keep their default meaning; SDL would turn them
+      * into an SDL_QUIT that a headless run never reads. Set before the
+@@ -353,29 +355,48 @@ int xbox_HostWindowMain(int (*guest_main)(void))
+     scale = e ? atoi(e) : 2;
+     if (scale < 1 || scale > 8)
+         scale = 2;
++    backend = getenv("RECOMP_PRESENT_BACKEND");
+ 
+-    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+     if (SDL_Init(FBWIN_SDL_SUBSYSTEMS) != 0) {
+         fprintf(stderr, "  [FBWIN] SDL video unavailable (%s); running headless\n",
+                 SDL_GetError());
+         return guest_main();
+     }
+-    win = SDL_CreateWindow(s_title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+-                           (int)FB_W * scale, (int)FB_H * scale,
+-                           SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+-    ren = win ? SDL_CreateRenderer(win, -1,
+-                                   vsync ? SDL_RENDERER_PRESENTVSYNC : 0)
+-              : NULL;
+-    if (!ren) {
+-        fprintf(stderr, "  [FBWIN] SDL window/renderer failed (%s); running headless\n",
+-                SDL_GetError());
++    win = NULL;
++    ren = NULL;
++    if (!backend || strcmp(backend, "sdl") != 0)
++        win = SDL_CreateWindow(s_title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
++                               (int)FB_W * scale, (int)FB_H * scale,
++                               SDL_WINDOW_VULKAN | SDL_WINDOW_ALLOW_HIGHDPI);
++    if (win)
++        vk = xbox_vk_presenter_create(win, vsync);
++    if (vk) {
++        use_vulkan = 1;
++        fprintf(stderr, "  [FBWIN] framebuffer window uses Vulkan swapchain presenter\n");
++    } else {
+         if (win)
+             SDL_DestroyWindow(win);
++        if (!backend || strcmp(backend, "sdl") != 0)
++            fprintf(stderr, "  [FBWIN] Vulkan unavailable; falling back to SDL renderer\n");
++        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
++        win = SDL_CreateWindow(s_title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
++                               (int)FB_W * scale, (int)FB_H * scale,
++                               SDL_WINDOW_ALLOW_HIGHDPI);
++        ren = win ? SDL_CreateRenderer(win, -1,
++                                       vsync ? SDL_RENDERER_PRESENTVSYNC : 0)
++                  : NULL;
++    }
++    if (!win || (!use_vulkan && !ren)) {
++        fprintf(stderr, "  [FBWIN] SDL window/renderer failed (%s); running headless\n",
++                SDL_GetError());
++        xbox_vk_presenter_destroy(vk);
++        if (ren) SDL_DestroyRenderer(ren);
++        if (win) SDL_DestroyWindow(win);
+         SDL_QuitSubSystem(FBWIN_SDL_SUBSYSTEMS);
+         return guest_main();
+     }
+-    SDL_RenderSetLogicalSize(ren, (int)FB_W, (int)FB_H);
+-    {
++    if (!use_vulkan) SDL_RenderSetLogicalSize(ren, (int)FB_W, (int)FB_H);
++    if (!use_vulkan) {
+         SDL_RendererInfo ri;
+         if (SDL_GetRendererInfo(ren, &ri) == 0)
+             fprintf(stderr, "  [FBWIN] framebuffer window open (%ux%u, SDL %s renderer,"
+@@ -386,7 +407,8 @@ int xbox_HostWindowMain(int (*guest_main)(void))
+     s_guest_done_event = SDL_RegisterEvents(2);
+     if (s_guest_done_event == (Uint32)-1) {
+         fprintf(stderr, "  [FBWIN] SDL_RegisterEvents failed; running headless\n");
+-        SDL_DestroyRenderer(ren);
++        xbox_vk_presenter_destroy(vk);
++        if (ren) SDL_DestroyRenderer(ren);
+         SDL_DestroyWindow(win);
+         SDL_QuitSubSystem(FBWIN_SDL_SUBSYSTEMS);
+         return guest_main();
+@@ -402,7 +424,8 @@ int xbox_HostWindowMain(int (*guest_main)(void))
+         fprintf(stderr, "  [FBWIN] cannot start the guest thread; running headless\n");
+         s_running = 0;
+         xbox_InputSetMainPump(0);
+-        SDL_DestroyRenderer(ren);
++        xbox_vk_presenter_destroy(vk);
++        if (ren) SDL_DestroyRenderer(ren);
+         SDL_DestroyWindow(win);
+         SDL_QuitSubSystem(FBWIN_SDL_SUBSYSTEMS);
+         return guest_main();
+@@ -458,7 +481,9 @@ int xbox_HostWindowMain(int (*guest_main)(void))
+             if (bpp == 2 || bpp == 4)
+                 px = (const uint8_t *)((uintptr_t)s_fb_va + xbox_GetMemoryOffset());
+         }
+-        if (px) {
++        if (px)
++            dirty = 1;
++        if (px && !use_vulkan) {
+             if (!tex || bpp != tex_bpp) {
+                 if (tex)
+                     SDL_DestroyTexture(tex);
+@@ -470,15 +495,19 @@ int xbox_HostWindowMain(int (*guest_main)(void))
+             }
+             if (tex)
+                 SDL_UpdateTexture(tex, NULL, px, (int)pitch);
+-            dirty = 1;
+         }
+         if (dirty) {
+             dirty = 0;
+-            SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+-            SDL_RenderClear(ren);
+-            if (tex)
+-                SDL_RenderCopy(ren, tex, NULL, NULL);
+-            SDL_RenderPresent(ren);
++            if (use_vulkan) {
++                if (px && !xbox_vk_presenter_draw(vk, px, bpp, pitch))
++                    fprintf(stderr, "  [FBWIN] Vulkan frame upload/present failed\n");
++            } else {
++                SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
++                SDL_RenderClear(ren);
++                if (tex)
++                    SDL_RenderCopy(ren, tex, NULL, NULL);
++                SDL_RenderPresent(ren);
++            }
+             if (new_frame) {
+                 static uint64_t frames;
+                 const char *dump = getenv("RECOMP_FB_DUMP");
+@@ -522,7 +551,8 @@ int xbox_HostWindowMain(int (*guest_main)(void))
+      * start calling SDL_GameControllerUpdate while SDL goes down. */
+     if (tex)
+         SDL_DestroyTexture(tex);
+-    SDL_DestroyRenderer(ren);
++    xbox_vk_presenter_destroy(vk);
++    if (ren) SDL_DestroyRenderer(ren);
+     SDL_DestroyWindow(win);
+     if (!xbox_InputAnyOpen())
+         SDL_Quit();
+diff --git a/src/video/fb_present_vulkan.c b/src/video/fb_present_vulkan.c
+new file mode 100644
+index 0000000..ff46a16
+--- /dev/null
++++ b/src/video/fb_present_vulkan.c
+@@ -0,0 +1,360 @@
++#include "fb_present_vulkan.h"
++
++#include <SDL_vulkan.h>
++#include <vulkan/vulkan.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#define FB_WIDTH 640u
++#define FB_HEIGHT 480u
++
++struct xbox_vk_presenter {
++    VkInstance instance;
++    VkSurfaceKHR surface;
++    VkPhysicalDevice physical;
++    VkDevice device;
++    VkQueue queue;
++    uint32_t queue_family;
++    VkSwapchainKHR swapchain;
++    VkFormat format;
++    VkColorSpaceKHR color_space;
++    VkExtent2D extent;
++    VkImage *images;
++    VkImageLayout *layouts;
++    uint32_t image_count;
++    VkBuffer staging;
++    VkDeviceMemory staging_memory;
++    uint8_t *mapped;
++    VkCommandPool command_pool;
++    VkCommandBuffer command;
++    VkSemaphore acquired;
++    VkSemaphore complete;
++    VkFence fence;
++};
++
++static int vk_ok(VkResult result, const char *operation)
++{
++    if (result == VK_SUCCESS)
++        return 1;
++    fprintf(stderr, "  [VULKAN] %s failed (%d)\n", operation, (int)result);
++    return 0;
++}
++
++static uint32_t memory_type(VkPhysicalDevice physical, uint32_t bits,
++                            VkMemoryPropertyFlags properties)
++{
++    VkPhysicalDeviceMemoryProperties p;
++    uint32_t i;
++    vkGetPhysicalDeviceMemoryProperties(physical, &p);
++    for (i = 0; i < p.memoryTypeCount; i++)
++        if ((bits & (1u << i))
++            && (p.memoryTypes[i].propertyFlags & properties) == properties)
++            return i;
++    return UINT32_MAX;
++}
++
++void xbox_vk_presenter_destroy(xbox_vk_presenter *p)
++{
++    if (!p)
++        return;
++    if (p->device)
++        vkDeviceWaitIdle(p->device);
++    if (p->device && p->mapped)
++        vkUnmapMemory(p->device, p->staging_memory);
++    if (p->device && p->fence) vkDestroyFence(p->device, p->fence, NULL);
++    if (p->device && p->acquired) vkDestroySemaphore(p->device, p->acquired, NULL);
++    if (p->device && p->complete) vkDestroySemaphore(p->device, p->complete, NULL);
++    if (p->device && p->command_pool) vkDestroyCommandPool(p->device, p->command_pool, NULL);
++    if (p->device && p->staging) vkDestroyBuffer(p->device, p->staging, NULL);
++    if (p->device && p->staging_memory) vkFreeMemory(p->device, p->staging_memory, NULL);
++    if (p->device && p->swapchain) vkDestroySwapchainKHR(p->device, p->swapchain, NULL);
++    if (p->device) vkDestroyDevice(p->device, NULL);
++    if (p->surface) vkDestroySurfaceKHR(p->instance, p->surface, NULL);
++    if (p->instance) vkDestroyInstance(p->instance, NULL);
++    free(p->images);
++    free(p->layouts);
++    free(p);
++}
++
++xbox_vk_presenter *xbox_vk_presenter_create(SDL_Window *window, int vsync)
++{
++    xbox_vk_presenter *p = calloc(1, sizeof *p);
++    VkApplicationInfo app = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
++        .pApplicationName = "Xbox Linux", .applicationVersion = 1,
++        .pEngineName = "xboxrecomp", .engineVersion = 1,
++        .apiVersion = VK_API_VERSION_1_0 };
++    VkInstanceCreateInfo ici = { .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
++        .pApplicationInfo = &app };
++    const char **extensions = NULL;
++    unsigned ext_count = 0;
++    VkPhysicalDevice *devices = NULL;
++    uint32_t device_count = 0, i, q;
++    VkSurfaceCapabilitiesKHR caps;
++    VkSurfaceFormatKHR *formats = NULL;
++    uint32_t format_count = 0;
++    VkPresentModeKHR *modes = NULL;
++    uint32_t mode_count = 0;
++    VkSwapchainCreateInfoKHR sci = { .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR };
++    VkDeviceQueueCreateInfo qci = { .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
++    VkDeviceCreateInfo dci = { .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
++    const char *device_extensions[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
++    float priority = 1.0f;
++    int drawable_w, drawable_h;
++
++    if (!p)
++        return NULL;
++    if (!SDL_Vulkan_GetInstanceExtensions(window, &ext_count, NULL)
++        || !ext_count) {
++        fprintf(stderr, "  [VULKAN] SDL instance extensions unavailable: %s\n", SDL_GetError());
++        goto fail;
++    }
++    extensions = calloc(ext_count, sizeof *extensions);
++    if (!extensions || !SDL_Vulkan_GetInstanceExtensions(window, &ext_count, extensions))
++        goto fail;
++    ici.enabledExtensionCount = ext_count;
++    ici.ppEnabledExtensionNames = extensions;
++    if (!vk_ok(vkCreateInstance(&ici, NULL, &p->instance), "vkCreateInstance")) goto fail;
++    if (!SDL_Vulkan_CreateSurface(window, p->instance, &p->surface)) {
++        fprintf(stderr, "  [VULKAN] SDL surface creation failed: %s\n", SDL_GetError());
++        goto fail;
++    }
++    if (!vk_ok(vkEnumeratePhysicalDevices(p->instance, &device_count, NULL),
++               "vkEnumeratePhysicalDevices") || !device_count) goto fail;
++    devices = calloc(device_count, sizeof *devices);
++    if (!devices || !vk_ok(vkEnumeratePhysicalDevices(p->instance, &device_count, devices),
++                           "vkEnumeratePhysicalDevices")) goto fail;
++
++    for (i = 0; i < device_count && !p->physical; i++) {
++        uint32_t qc = 0;
++        VkQueueFamilyProperties *queues;
++        vkGetPhysicalDeviceQueueFamilyProperties(devices[i], &qc, NULL);
++        queues = calloc(qc, sizeof *queues);
++        if (!queues) goto fail;
++        vkGetPhysicalDeviceQueueFamilyProperties(devices[i], &qc, queues);
++        for (q = 0; q < qc; q++) {
++            VkBool32 present = VK_FALSE;
++            vkGetPhysicalDeviceSurfaceSupportKHR(devices[i], q, p->surface, &present);
++            if ((queues[q].queueFlags & VK_QUEUE_GRAPHICS_BIT) && present) {
++                p->physical = devices[i];
++                p->queue_family = q;
++                break;
++            }
++        }
++        free(queues);
++    }
++    free(devices); devices = NULL;
++    if (!p->physical) {
++        fprintf(stderr, "  [VULKAN] no graphics/presentation queue found\n");
++        goto fail;
++    }
++    if (!vk_ok(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(p->physical, p->surface, &caps),
++               "surface capabilities") || !(caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT)) {
++        fprintf(stderr, "  [VULKAN] swapchain images cannot receive framebuffer uploads\n");
++        goto fail;
++    }
++    if (!vk_ok(vkGetPhysicalDeviceSurfaceFormatsKHR(p->physical, p->surface, &format_count, NULL),
++               "surface formats") || !format_count) goto fail;
++    formats = calloc(format_count, sizeof *formats);
++    if (!formats || !vk_ok(vkGetPhysicalDeviceSurfaceFormatsKHR(p->physical, p->surface,
++                                         &format_count, formats), "surface formats")) goto fail;
++    p->format = VK_FORMAT_UNDEFINED;
++    for (i = 0; i < format_count; i++) {
++        if (formats[i].format == VK_FORMAT_UNDEFINED) {
++            p->format = VK_FORMAT_B8G8R8A8_UNORM;
++            p->color_space = formats[i].colorSpace;
++            break;
++        }
++        if (formats[i].format == VK_FORMAT_B8G8R8A8_UNORM
++            || formats[i].format == VK_FORMAT_R8G8B8A8_UNORM) {
++            p->format = formats[i].format;
++            p->color_space = formats[i].colorSpace;
++            break;
++        }
++    }
++    free(formats); formats = NULL;
++    if (p->format == VK_FORMAT_UNDEFINED) {
++        fprintf(stderr, "  [VULKAN] no supported 8-bit swapchain format\n");
++        goto fail;
++    }
++    if (!vk_ok(vkGetPhysicalDeviceSurfacePresentModesKHR(p->physical, p->surface,
++                                                         &mode_count, NULL), "present modes")) goto fail;
++    modes = calloc(mode_count, sizeof *modes);
++    if (!modes || !vk_ok(vkGetPhysicalDeviceSurfacePresentModesKHR(p->physical, p->surface,
++                                             &mode_count, modes), "present modes")) goto fail;
++    sci.presentMode = VK_PRESENT_MODE_FIFO_KHR;
++    if (!vsync)
++        for (i = 0; i < mode_count; i++)
++            if (modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) sci.presentMode = modes[i];
++    free(modes); modes = NULL;
++
++    SDL_Vulkan_GetDrawableSize(window, &drawable_w, &drawable_h);
++    p->extent = caps.currentExtent.width != UINT32_MAX ? caps.currentExtent
++        : (VkExtent2D){ (uint32_t)drawable_w, (uint32_t)drawable_h };
++    if (p->extent.width < caps.minImageExtent.width) p->extent.width = caps.minImageExtent.width;
++    if (p->extent.height < caps.minImageExtent.height) p->extent.height = caps.minImageExtent.height;
++    if (p->extent.width > caps.maxImageExtent.width) p->extent.width = caps.maxImageExtent.width;
++    if (p->extent.height > caps.maxImageExtent.height) p->extent.height = caps.maxImageExtent.height;
++    if (!p->extent.width || !p->extent.height) goto fail;
++    sci.surface = p->surface;
++    sci.minImageCount = caps.minImageCount + 1;
++    if (caps.maxImageCount && sci.minImageCount > caps.maxImageCount) sci.minImageCount = caps.maxImageCount;
++    sci.imageFormat = p->format;
++    sci.imageColorSpace = p->color_space;
++    sci.imageExtent = p->extent;
++    sci.imageArrayLayers = 1;
++    sci.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
++    sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
++    sci.preTransform = caps.currentTransform;
++    sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
++    if (!(caps.supportedCompositeAlpha & sci.compositeAlpha)) {
++        for (i = 0; i < 4; i++)
++            if (caps.supportedCompositeAlpha & (1u << i)) {
++                sci.compositeAlpha = (VkCompositeAlphaFlagBitsKHR)(1u << i);
++                break;
++            }
++    }
++    sci.clipped = VK_TRUE;
++    qci.queueFamilyIndex = p->queue_family; qci.queueCount = 1; qci.pQueuePriorities = &priority;
++    dci.queueCreateInfoCount = 1; dci.pQueueCreateInfos = &qci;
++    dci.enabledExtensionCount = 1; dci.ppEnabledExtensionNames = device_extensions;
++    if (!vk_ok(vkCreateDevice(p->physical, &dci, NULL, &p->device), "vkCreateDevice")) goto fail;
++    vkGetDeviceQueue(p->device, p->queue_family, 0, &p->queue);
++    if (!vk_ok(vkCreateSwapchainKHR(p->device, &sci, NULL, &p->swapchain), "vkCreateSwapchainKHR")) goto fail;
++    if (!vk_ok(vkGetSwapchainImagesKHR(p->device, p->swapchain, &p->image_count, NULL), "swapchain images")) goto fail;
++    p->images = calloc(p->image_count, sizeof *p->images);
++    p->layouts = calloc(p->image_count, sizeof *p->layouts);
++    if (!p->images || !p->layouts || !vk_ok(vkGetSwapchainImagesKHR(p->device, p->swapchain,
++                                                 &p->image_count, p->images), "swapchain images")) goto fail;
++    {
++        VkBufferCreateInfo bi = { .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
++            .size = (VkDeviceSize)p->extent.width * p->extent.height * 4,
++            .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE };
++        VkMemoryRequirements req;
++        VkMemoryAllocateInfo ai = { .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
++        uint32_t mt;
++        if (!vk_ok(vkCreateBuffer(p->device, &bi, NULL, &p->staging), "staging buffer")) goto fail;
++        vkGetBufferMemoryRequirements(p->device, p->staging, &req);
++        mt = memory_type(p->physical, req.memoryTypeBits,
++                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
++        if (mt == UINT32_MAX) { fprintf(stderr, "  [VULKAN] no coherent host-visible memory\n"); goto fail; }
++        ai.allocationSize = req.size; ai.memoryTypeIndex = mt;
++        if (!vk_ok(vkAllocateMemory(p->device, &ai, NULL, &p->staging_memory), "staging memory")
++            || !vk_ok(vkBindBufferMemory(p->device, p->staging, p->staging_memory, 0), "bind staging")
++            || !vk_ok(vkMapMemory(p->device, p->staging_memory, 0, bi.size, 0, (void **)&p->mapped), "map staging")) goto fail;
++    }
++    {
++        VkCommandPoolCreateInfo pi = { .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
++            .queueFamilyIndex = p->queue_family, .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT };
++        VkCommandBufferAllocateInfo ai = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
++            .commandPool = VK_NULL_HANDLE, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 1 };
++        VkSemaphoreCreateInfo si = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
++        VkFenceCreateInfo fi = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
++            .flags = VK_FENCE_CREATE_SIGNALED_BIT };
++        if (!vk_ok(vkCreateCommandPool(p->device, &pi, NULL, &p->command_pool), "command pool")) goto fail;
++        ai.commandPool = p->command_pool;
++        if (!vk_ok(vkAllocateCommandBuffers(p->device, &ai, &p->command), "command buffer")
++            || !vk_ok(vkCreateSemaphore(p->device, &si, NULL, &p->acquired), "acquire semaphore")
++            || !vk_ok(vkCreateSemaphore(p->device, &si, NULL, &p->complete), "present semaphore")
++            || !vk_ok(vkCreateFence(p->device, &fi, NULL, &p->fence), "frame fence")) goto fail;
++    }
++    {
++        VkPhysicalDeviceProperties props;
++        vkGetPhysicalDeviceProperties(p->physical, &props);
++        fprintf(stderr, "  [VULKAN] presenter: %s (%ux%u, framebuffer upload)\n",
++                props.deviceName, p->extent.width, p->extent.height);
++    }
++    free(extensions);
++    return p;
++fail:
++    free(devices); free(formats); free(modes); free(extensions);
++    xbox_vk_presenter_destroy(p);
++    return NULL;
++}
++
++int xbox_vk_presenter_draw(xbox_vk_presenter *p, const uint8_t *pixels,
++                           uint32_t bpp, uint32_t pitch)
++{
++    uint32_t x, y, image_index;
++    VkResult r;
++    VkCommandBufferBeginInfo begin = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
++        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
++    VkImageMemoryBarrier to_copy = { .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
++        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
++        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
++        .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT };
++    VkImageMemoryBarrier to_present = { .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
++        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
++        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
++        .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
++        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT };
++    VkBufferImageCopy copy = { .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
++        .imageExtent = { 0, 0, 1 } };
++    VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
++    VkSubmitInfo submit = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO };
++    VkPresentInfoKHR present = { .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
++
++    if (!p || !pixels || (bpp != 2 && bpp != 4) || pitch < FB_WIDTH * bpp)
++        return 0;
++    submit.waitSemaphoreCount = 1;
++    submit.pWaitSemaphores = &p->acquired;
++    submit.pWaitDstStageMask = &wait_stage;
++    submit.commandBufferCount = 1;
++    submit.pCommandBuffers = &p->command;
++    submit.signalSemaphoreCount = 1;
++    submit.pSignalSemaphores = &p->complete;
++    present.waitSemaphoreCount = 1;
++    present.pWaitSemaphores = &p->complete;
++    present.swapchainCount = 1;
++    present.pSwapchains = &p->swapchain;
++    present.pImageIndices = &image_index;
++    for (y = 0; y < p->extent.height; y++) {
++        uint32_t sy = (uint64_t)y * FB_HEIGHT / p->extent.height;
++        for (x = 0; x < p->extent.width; x++) {
++            uint32_t sx = (uint64_t)x * FB_WIDTH / p->extent.width;
++            uint8_t red, green, blue, *d = p->mapped + ((size_t)y * p->extent.width + x) * 4;
++            if (bpp == 4) {
++                uint32_t v; memcpy(&v, pixels + (size_t)sy * pitch + (size_t)sx * 4, 4);
++                red = (uint8_t)(v >> 16); green = (uint8_t)(v >> 8); blue = (uint8_t)v;
++            } else {
++                uint16_t v; memcpy(&v, pixels + (size_t)sy * pitch + (size_t)sx * 2, 2);
++                red = (uint8_t)(((v >> 11) & 31) * 255 / 31);
++                green = (uint8_t)(((v >> 5) & 63) * 255 / 63);
++                blue = (uint8_t)((v & 31) * 255 / 31);
++            }
++            if (p->format == VK_FORMAT_B8G8R8A8_UNORM) { d[0] = blue; d[1] = green; d[2] = red; }
++            else { d[0] = red; d[1] = green; d[2] = blue; }
++            d[3] = 255;
++        }
++    }
++    if (!vk_ok(vkWaitForFences(p->device, 1, &p->fence, VK_TRUE, UINT64_MAX), "wait frame")) return 0;
++    r = vkAcquireNextImageKHR(p->device, p->swapchain, UINT64_MAX, p->acquired, VK_NULL_HANDLE, &image_index);
++    if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) { vk_ok(r, "acquire image"); return 0; }
++    if (!vk_ok(vkResetFences(p->device, 1, &p->fence), "reset frame fence")
++        || !vk_ok(vkResetCommandBuffer(p->command, 0), "reset command buffer")
++        || !vk_ok(vkBeginCommandBuffer(p->command, &begin), "begin command buffer")) return 0;
++    to_copy.image = p->images[image_index];
++    to_copy.oldLayout = p->layouts[image_index] ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_UNDEFINED;
++    to_copy.srcAccessMask = 0;
++    vkCmdPipelineBarrier(p->command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
++        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &to_copy);
++    copy.bufferOffset = 0; copy.bufferRowLength = 0; copy.bufferImageHeight = 0;
++    copy.imageOffset = (VkOffset3D){0, 0, 0};
++    copy.imageExtent = (VkExtent3D){p->extent.width, p->extent.height, 1};
++    vkCmdCopyBufferToImage(p->command, p->staging, p->images[image_index],
++                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
++    to_present.image = p->images[image_index];
++    vkCmdPipelineBarrier(p->command, VK_PIPELINE_STAGE_TRANSFER_BIT,
++        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, NULL, 0, NULL, 1, &to_present);
++    if (!vk_ok(vkEndCommandBuffer(p->command), "end command buffer")
++        || !vk_ok(vkQueueSubmit(p->queue, 1, &submit, p->fence), "submit frame")) return 0;
++    p->layouts[image_index] = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
++    r = vkQueuePresentKHR(p->queue, &present);
++    if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) { vk_ok(r, "present frame"); return 0; }
++    /* One pair of binary semaphores is reused; wait until presentation has
++     * consumed the signal before the next submission re-signals it. */
++    if (!vk_ok(vkQueueWaitIdle(p->queue), "wait presentation queue")) return 0;
++    return 1;
++}
+diff --git a/src/video/fb_present_vulkan.h b/src/video/fb_present_vulkan.h
+new file mode 100644
+index 0000000..0de86c7
+--- /dev/null
++++ b/src/video/fb_present_vulkan.h
+@@ -0,0 +1,14 @@
++#ifndef XBOX_FB_PRESENT_VULKAN_H
++#define XBOX_FB_PRESENT_VULKAN_H
++
++#include <SDL.h>
++#include <stdint.h>
++
++typedef struct xbox_vk_presenter xbox_vk_presenter;
++
++xbox_vk_presenter *xbox_vk_presenter_create(SDL_Window *window, int vsync);
++int xbox_vk_presenter_draw(xbox_vk_presenter *presenter, const uint8_t *pixels,
++                           uint32_t bpp, uint32_t pitch);
++void xbox_vk_presenter_destroy(xbox_vk_presenter *presenter);
++
++#endif

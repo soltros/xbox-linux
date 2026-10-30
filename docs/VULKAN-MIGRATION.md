@@ -19,10 +19,13 @@ it is not Vulkan rendering and its current menu output is visibly incorrect.
    shell. Record physical-device, driver, and validation-layer details in
    diagnostic bundles. Keep a software Vulkan implementation available for
    headless CI where possible.
-2. **Vulkan presentation.** Replace the SDL renderer-backed window with an SDL
-   Vulkan surface, swapchain, and explicit frame synchronization. Initially
-   upload the CPU-rendered Xbox framebuffer unchanged. This isolates window,
-   synchronization, and color-format issues from GPU emulation.
+2. **Vulkan presentation (initial implementation).** The Linux presenter now
+   tries an SDL Vulkan surface, swapchain, and explicit frame synchronization
+   first, uploading the CPU-rendered Xbox framebuffer. It falls back to SDL's
+   renderer if Vulkan setup fails. This isolates window, synchronization, and
+   color-format issues from GPU emulation; resize recovery and validation-layer
+   checks remain to be completed. Set `RECOMP_PRESENT_BACKEND=sdl` for a
+   comparison run using the former SDL renderer.
 3. **NV2A command translation.** Implement the methods used by the title as
    Vulkan pipeline state and commands. Preserve register/pushbuffer traces and
    framebuffer captures so Vulkan output can be compared with the CPU baseline

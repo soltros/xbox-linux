@@ -12,19 +12,29 @@ ROOT=Path(__file__).resolve().parents[1]
 def main():
     ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('command',choices=['check','fetch','patch']);a=ap.parse_args()
     lock=json.loads((ROOT/'toolchain.json').read_text())['xboxrecomp'];dest=ROOT/'third_party/xboxrecomp'
-    patch=ROOT/'patches/xboxrecomp-linux.patch'
+    patches=[ROOT/'patches/xboxrecomp-linux.patch',
+             ROOT/'patches/xboxrecomp-vulkan.patch']
     def apply_local_patch(repo):
         head=subprocess.check_output(['git','-C',str(repo),'rev-parse','HEAD'],text=True).strip()
         if head!=lock['revision']:raise ValueError(f'checkout is {head}; expected {lock["revision"]}; refusing local patch')
-        if not patch.is_file():raise ValueError(f'local patch is missing: {patch}')
-        reverse=subprocess.run(['git','-C',str(repo),'apply','--reverse','--check',str(patch)],capture_output=True)
-        if reverse.returncode==0:
-            print('Project runtime patch is already applied');return
-        forward=subprocess.run(['git','-C',str(repo),'apply','--check',str(patch)],capture_output=True,text=True)
-        if forward.returncode:
-            raise ValueError('local patch does not apply cleanly; inspect vendor changes before proceeding')
-        subprocess.run(['git','-C',str(repo),'apply',str(patch)],check=True)
-        print(f'Applied project runtime patch from {patch}')
+        later_layers_applied=all(
+            subprocess.run(['git','-C',str(repo),'apply','--reverse','--check',str(patch)],
+                           capture_output=True).returncode==0
+            for patch in patches[1:])
+        for index,patch in enumerate(patches):
+            if not patch.is_file():raise ValueError(f'local patch is missing: {patch}')
+            reverse=subprocess.run(['git','-C',str(repo),'apply','--reverse','--check',str(patch)],capture_output=True)
+            if reverse.returncode==0:
+                print(f'Project runtime patch is already applied: {patch.name}')
+                continue
+            if index==0 and later_layers_applied:
+                print(f'Base runtime patch is present beneath {patches[1].name}')
+                continue
+            forward=subprocess.run(['git','-C',str(repo),'apply','--check',str(patch)],capture_output=True,text=True)
+            if forward.returncode:
+                raise ValueError(f'local patch does not apply cleanly ({patch.name}); inspect vendor changes before proceeding')
+            subprocess.run(['git','-C',str(repo),'apply',str(patch)],check=True)
+            print(f'Applied project runtime patch from {patch}')
     if a.command=='patch':
         if not dest.is_dir():raise ValueError('framework checkout missing; run fetch first')
         apply_local_patch(dest);return

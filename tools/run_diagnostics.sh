@@ -52,6 +52,7 @@ fi
     fi
     printf 'selected_environment:\n'
     for name in RECOMP_FB_WINDOW RECOMP_FB_DUMP RECOMP_FB_WINDOW_DUMP_EVERY RECOMP_HEADLESS \
+                RECOMP_PRESENT_BACKEND \
                 RECOMP_TEX_DUMP RECOMP_TITLE_KEVENTS RECOMP_VBLANK RECOMP_PB_EXEC \
                 RECOMP_USB RECOMP_WATCHDOG_SECS \
                 RECOMP_PAD_SCRIPT RECOMP_THREAD_TRACE RECOMP_DPC_TRACE; do
@@ -81,7 +82,7 @@ fi
     printf '\noutcome=%s\nprocess_status=%s\n' "$outcome" "$run_status"
     printf 'log_bytes=%s\n' "$(wc -c <"$log")"
     printf 'diagnostic_lines:\n'
-    grep -E '^[[:space:]]*\[BOOT\]|\[AV\] SetDisplayMode|\[FBWIN\]|^[[:space:]]*\[GPU\] ([0-9.]+ fps|surface |draws |brightest |[0-9]+ pixels written|rasterised |vertex programs:|fixed-function transform:|batches:)|\[TEXUSE\]|\[TEXDUMP\]|\[(FATAL|WATCHDOG|UNIMPL|NV2A)\]|\[FILE\].*(fonts/.*\.laf|FAILED)|missing at watchdog|native_backtrace|fault_address=' "$log" \
+    grep -E '^[[:space:]]*\[BOOT\]|\[AV\] SetDisplayMode|\[FBWIN\]|\[VULKAN\]|^[[:space:]]*\[GPU\] ([0-9.]+ fps|surface |draws |brightest |[0-9]+ pixels written|rasterised |vertex programs:|fixed-function transform:|batches:)|\[TEXUSE\]|\[TEXDUMP\]|\[(FATAL|WATCHDOG|UNIMPL|NV2A)\]|\[FILE\].*(fonts/.*\.laf|FAILED)|missing at watchdog|native_backtrace|fault_address=' "$log" \
         | tail -n 100 || true
     printf 'capture_files:\n'
     captures=$(find "$out" -maxdepth 1 -type f \( -name '*.bmp' -o -name '*.png' \) \
