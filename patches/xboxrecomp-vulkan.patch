@@ -610,3 +610,64 @@
 +void xbox_vk_presenter_destroy(xbox_vk_presenter *presenter);
 +
 +#endif
+diff --git a/src/input/xinput_device.c b/src/input/xinput_device.c
+index 5975014..7619b6e 100644
+--- a/src/input/xinput_device.c
++++ b/src/input/xinput_device.c
+@@ -13,6 +13,7 @@
+ #include "xinput_xbox.h"
+ #include "keyboard.h"
+ #include "mkb_input.h"
++#include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+ 
+@@ -180,6 +181,7 @@ DWORD xbox_InputGetCapabilities(DWORD dwPort, DWORD dwFlags, XBOX_INPUT_CAPABILI
+ static SDL_GameController *g_pads[XBOX_MAX_CONTROLLERS];
+ static BOOL  g_controller_connected[XBOX_MAX_CONTROLLERS];
+ static DWORD g_packet[XBOX_MAX_CONTROLLERS];
++static int g_input_diag;
+ 
+ /* Set while the framebuffer window's main thread pumps SDL events
+  * (src/video/fb_present_sdl.c). The pump already updates the controllers,
+@@ -205,12 +207,28 @@ int xbox_InputAnyOpen(void)
+ static void open_controllers(void)
+ {
+     int slot = 0;
+-    for (int i = 0; i < SDL_NumJoysticks() && slot < XBOX_MAX_CONTROLLERS; i++) {
++    int count = SDL_NumJoysticks();
++    if (g_input_diag) {
++        fprintf(stderr, "  [INPUT] SDL sees %d joystick device(s)\n", count);
++        for (int i = 0; i < count; i++) {
++            const char *name = SDL_JoystickNameForIndex(i);
++            fprintf(stderr, "  [INPUT] SDL device %d: %s vid=0x%04X pid=0x%04X "
++                    "gamecontroller=%d\n", i, name ? name : "<unnamed>",
++                    SDL_JoystickGetDeviceVendor(i),
++                    SDL_JoystickGetDeviceProduct(i), SDL_IsGameController(i));
++        }
++    }
++    for (int i = 0; i < count && slot < XBOX_MAX_CONTROLLERS; i++) {
+         if (!SDL_IsGameController(i))
+             continue;
+         if (!g_pads[slot]) {
+             g_pads[slot] = SDL_GameControllerOpen(i);
+             g_controller_connected[slot] = (g_pads[slot] != NULL);
++            if (g_input_diag) {
++                fprintf(stderr, "  [INPUT] SDL controller slot %d device %d: %s%s\n",
++                        slot, i, g_pads[slot] ? "opened" : "open failed",
++                        g_pads[slot] ? "" : SDL_GetError());
++            }
+         }
+         slot++;
+     }
+@@ -223,5 +241,10 @@ void xbox_InputInit(void)
+     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
+     if (!SDL_WasInit(SDL_INIT_GAMECONTROLLER))
+         SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER);
++    g_input_diag = getenv("RECOMP_INPUT_DIAG") != NULL;
++    if (g_input_diag)
++        fprintf(stderr, "  [INPUT] SDL init: %s\n",
++                SDL_WasInit(SDL_INIT_GAMECONTROLLER) ? "gamecontroller ready"
++                                                     : SDL_GetError());
+     open_controllers();
+ }
