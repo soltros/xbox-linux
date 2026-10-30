@@ -17,7 +17,7 @@ For Obi-Wan, the short form is:
 ./diagnostic.sh
 ```
 
-It checks the sibling `obiwan-recomp/build/` locations for the title executable, expects the extracted game at `../Star Wars - Obi-Wan (USA)`, and stores saves under `xbox-linux/diagnostics/obiwan-save`. It also enables the known Obi-Wan startup settings (`RECOMP_FB_WINDOW`, title events, paced vblank, pushbuffer execution, and USB) and uses a 28-second runtime watchdog. Override any path with `OBIWAN_EXECUTABLE`, `OBIWAN_GAME_DIR`, or `OBIWAN_SAVE_DIR`, and override any runtime setting by exporting its `RECOMP_*` variable before launch.
+It checks the sibling `obiwan-recomp/build/` locations for the title executable, expects the extracted game at `../Star Wars - Obi-Wan (USA)`, and stores saves under `xbox-linux/diagnostics/obiwan-save`. It also enables the known Obi-Wan startup settings (`RECOMP_FB_WINDOW`, title events, paced vblank, pushbuffer execution, USB, and a Start/A input script at 6/9 seconds) and uses a 28-second runtime watchdog. Override any path with `OBIWAN_EXECUTABLE`, `OBIWAN_GAME_DIR`, or `OBIWAN_SAVE_DIR`, and override any runtime setting by exporting its `RECOMP_*` variable before launch. Set `RECOMP_PAD_SCRIPT=` to disable scripted input.
 
 The wrapper creates the save directory if needed. The title opens its normal window. Close it normally when you have captured the behavior you want; otherwise the wrapper sends an interrupt after 45 seconds, allows five seconds for shutdown, then kills a process that remains. The runtime watchdog defaults to 20 seconds. The wrapper itself exits successfully after collecting the run; check `summary.txt` for the game's actual exit outcome.
 
