@@ -60,6 +60,8 @@ fi
 
 mkdir -p "$GHIDRA_DIR/Extensions/Ghidra"
 cp -f "$EXTENSION_ZIP" "$GHIDRA_DIR/Extensions/Ghidra/$XBE_EXTENSION"
+mkdir -p "$GHIDRA_DIR/Ghidra/Extensions"
+unzip -oq "$EXTENSION_ZIP" -d "$GHIDRA_DIR/Ghidra/Extensions"
 
 cat > "$TOOLS/ghidra-xbe/open-ghidra.sh" <<'LAUNCHER'
 #!/usr/bin/env bash
@@ -72,5 +74,4 @@ chmod +x "$TOOLS/ghidra-xbe/open-ghidra.sh"
 echo
 echo "Ghidra $GHIDRA_VERSION and the matching XboxDev XBE loader are ready."
 echo "Launch: $TOOLS/ghidra-xbe/open-ghidra.sh"
-echo "In Ghidra, open File > Install Extensions, select XboxExecutableLoader,"
-echo "enable it, restart Ghidra, then import each game's default.xbe."
+echo "XboxExecutableLoader is installed. Import each game's default.xbe."

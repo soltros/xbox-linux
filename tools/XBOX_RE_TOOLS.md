@@ -5,10 +5,11 @@ a temporary Nix shell for Java 21, curl, and unzip; no system profile is changed
 The downloaded tools live under `tools/xbox-re-tools/` (ignored by git). Ghidra
 is about 570 MB and needs around 1.5 GB of disk space after extraction.
 
-After setup, launch `tools/xbox-re-tools/ghidra-xbe/open-ghidra.sh`. In Ghidra,
-use **File → Install Extensions…**, enable `XboxExecutableLoader`, restart, and
-import the game's `default.xbe`. This XboxDev extension loads the XBE format and
-provides Xbox type definitions and library-signature matching.
+After setup, launch `tools/xbox-re-tools/ghidra-xbe/open-ghidra.sh` and import
+the game's `default.xbe`. The setup script installs `XboxExecutableLoader`
+directly into Ghidra, including for headless analysis. This XboxDev extension
+loads the XBE format and provides Xbox type definitions and library-signature
+matching.
 
 The archives are pinned to matching Ghidra and extension versions and verified
 with SHA-256. Ghidra 12.1.4 is used because the published XboxDev extension
