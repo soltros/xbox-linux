@@ -611,7 +611,7 @@
 +
 +#endif
 diff --git a/src/input/xinput_device.c b/src/input/xinput_device.c
-index 5975014..7619b6e 100644
+index 5975014..d6ac581 100644
 --- a/src/input/xinput_device.c
 +++ b/src/input/xinput_device.c
 @@ -13,6 +13,7 @@
@@ -622,15 +622,16 @@ index 5975014..7619b6e 100644
  #include <stdlib.h>
  #include <string.h>
  
-@@ -180,6 +181,7 @@ DWORD xbox_InputGetCapabilities(DWORD dwPort, DWORD dwFlags, XBOX_INPUT_CAPABILI
+@@ -180,6 +181,8 @@ DWORD xbox_InputGetCapabilities(DWORD dwPort, DWORD dwFlags, XBOX_INPUT_CAPABILI
  static SDL_GameController *g_pads[XBOX_MAX_CONTROLLERS];
  static BOOL  g_controller_connected[XBOX_MAX_CONTROLLERS];
  static DWORD g_packet[XBOX_MAX_CONTROLLERS];
 +static int g_input_diag;
++static int g_input_initialized;
  
  /* Set while the framebuffer window's main thread pumps SDL events
   * (src/video/fb_present_sdl.c). The pump already updates the controllers,
-@@ -205,12 +207,28 @@ int xbox_InputAnyOpen(void)
+@@ -205,12 +208,28 @@ int xbox_InputAnyOpen(void)
  static void open_controllers(void)
  {
      int slot = 0;
@@ -660,7 +661,7 @@ index 5975014..7619b6e 100644
          }
          slot++;
      }
-@@ -223,5 +241,10 @@ void xbox_InputInit(void)
+@@ -223,7 +242,13 @@ void xbox_InputInit(void)
      SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
      if (!SDL_WasInit(SDL_INIT_GAMECONTROLLER))
          SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER);
@@ -670,4 +671,19 @@ index 5975014..7619b6e 100644
 +                SDL_WasInit(SDL_INIT_GAMECONTROLLER) ? "gamecontroller ready"
 +                                                     : SDL_GetError());
      open_controllers();
++    g_input_initialized = 1;
  }
+ 
+ DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState)
+@@ -231,6 +256,11 @@ DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState)
+     if (dwPort >= XBOX_MAX_CONTROLLERS || !pState)
+         return ERROR_DEVICE_NOT_CONNECTED;
+ 
++    /* Some titles reach the Xbox input API only through the emulated USB
++     * gamepad driver and never call this compatibility layer's init hook. */
++    if (!g_input_initialized)
++        xbox_InputInit();
++
+     SDL_GameController *c = g_pads[dwPort];
+     if (!c || !SDL_GameControllerGetAttached(c)) {
+         g_controller_connected[dwPort] = FALSE;
