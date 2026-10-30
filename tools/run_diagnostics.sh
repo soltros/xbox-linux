@@ -40,7 +40,7 @@ limit=${DIAG_TIMEOUT_SECS:-45}
     if command -v lspci >/dev/null; then lspci 2>/dev/null | grep -Ei 'vga|3d|display' || true
     else echo 'lspci unavailable'; fi
     printf 'selected_environment:\n'
-    for name in RECOMP_TITLE_KEVENTS RECOMP_VBLANK RECOMP_PB_EXEC RECOMP_USB \
+    for name in RECOMP_FB_WINDOW RECOMP_TITLE_KEVENTS RECOMP_VBLANK RECOMP_PB_EXEC RECOMP_USB \
                 RECOMP_WATCHDOG_SECS RECOMP_PAD_SCRIPT RECOMP_THREAD_TRACE RECOMP_DPC_TRACE; do
         if [[ -v $name ]]; then printf '%s=%s\n' "$name" "${!name}"; fi
     done
@@ -61,6 +61,9 @@ case $run_status in
     130|143) outcome=interrupted_or_closed ;;
     *) outcome=exit_status_$run_status ;;
 esac
+if [[ $run_status -eq 3 ]] && grep -q '\[WATCHDOG\]' "$log"; then
+    outcome=runtime_watchdog
+fi
 {
     printf '\noutcome=%s\nprocess_status=%s\n' "$outcome" "$run_status"
     printf 'log_bytes=%s\n' "$(wc -c <"$log")"

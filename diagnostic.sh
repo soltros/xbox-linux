@@ -38,4 +38,13 @@ if [[ ! -d $game ]]; then
     exit 2
 fi
 
+# Match the known-good Obi-Wan launcher defaults so the diagnostic run creates
+# its framebuffer window and services the title's startup device/event paths.
+export RECOMP_FB_WINDOW=${RECOMP_FB_WINDOW:-1}
+export RECOMP_TITLE_KEVENTS=${RECOMP_TITLE_KEVENTS:-1}
+export RECOMP_VBLANK=${RECOMP_VBLANK:-paced}
+export RECOMP_PB_EXEC=${RECOMP_PB_EXEC:-1}
+export RECOMP_USB=${RECOMP_USB:-1}
+export RECOMP_WATCHDOG_SECS=${RECOMP_WATCHDOG_SECS:-28}
+
 exec "$root/tools/run_diagnostics.sh" "$exe" "$game" "$save" "$@"

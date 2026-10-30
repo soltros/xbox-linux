@@ -5,6 +5,7 @@ __pycache__/
 build/
 third_party/
 reports/
+diagnostics/
 result*
 *.xbe
 *.iso
