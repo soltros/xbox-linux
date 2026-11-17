@@ -13,7 +13,8 @@ def main():
     ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('command',choices=['check','fetch','patch']);a=ap.parse_args()
     lock=json.loads((ROOT/'toolchain.json').read_text())['xboxrecomp'];dest=ROOT/'third_party/xboxrecomp'
     patches=[ROOT/'patches/xboxrecomp-linux.patch',
-             ROOT/'patches/xboxrecomp-vulkan.patch']
+             ROOT/'patches/xboxrecomp-vulkan.patch',
+             ROOT/'patches/xboxrecomp-obiwan-input-launch.patch']
     def apply_local_patch(repo):
         head=subprocess.check_output(['git','-C',str(repo),'rev-parse','HEAD'],text=True).strip()
         if head!=lock['revision']:raise ValueError(f'checkout is {head}; expected {lock["revision"]}; refusing local patch')

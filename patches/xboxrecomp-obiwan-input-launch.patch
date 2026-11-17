@@ -1,0 +1,187 @@
+diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
+index 209659f..5c38731 100644
+--- a/src/kernel/kernel_bridge.c
++++ b/src/kernel/kernel_bridge.c
+@@ -238,10 +238,41 @@ static void kernel_data_init(void)
+      * RECOMP_CMDLINE does the same thing here, so a title can be told to load
+      * a level the way the console would tell it: "+map intro".
+      */
++    /* A captured launch page (see the capture half in
++     * bridge_HalReturnToFirmware) reboots straight into whatever the title
++     * handed itself: Obi-Wan commits a new profile, writes a launch page
++     * naming its own image plus a level id, and quick-reboots. Installing
++     * the captured page here is the second boot of that reboot. A set but
++     * missing file means "capture into it on the way out", so one variable
++     * drives both halves of a two-run handoff. */
++    {
++        const char *launch_file = getenv("RECOMP_LAUNCH_FILE");
++        FILE *lf = (launch_file && *launch_file)
++                 ? fopen(launch_file, "rb") : NULL;
++
++        if (lf) {
++            uint32_t page = xbox_HeapAlloc(0x1000 + 0x0C00, 4096);
++            if (page) {
++                uint32_t i;
++                int c;
++                for (i = 0; i < 0x1000 && (c = fgetc(lf)) != EOF; i++)
++                    BRIDGE_MEM8(page + i) = (uint8_t)c;
++                BRIDGE_MEM32(XBOX_KERNEL_DATA_BASE + KDATA_LAUNCH_DATA_PAGE) =
++                    page;
++                fprintf(stderr, "  Launch data: type %u at 0x%08X, "
++                                "%u bytes from %s\n",
++                        BRIDGE_MEM32(page), page, i, launch_file);
++            }
++            fclose(lf);
++        }
++    }
+     {
+         const char *cmdline = getenv("RECOMP_CMDLINE");
+ 
+-        if (cmdline && *cmdline) {
++        if (BRIDGE_MEM32(XBOX_KERNEL_DATA_BASE
++                         + KDATA_LAUNCH_DATA_PAGE)) {
++            /* captured page above wins over RECOMP_CMDLINE */
++        } else if (cmdline && *cmdline) {
+             uint32_t page = xbox_HeapAlloc(0x1000 + 0x0C00, 4096);
+             if (page) {
+                 size_t n = strlen(cmdline);
+@@ -1791,6 +1822,23 @@ static void bridge_HalReturnToFirmware(void)
+             for (i = 0; i < 8; i++)
+                 fprintf(stderr, " %08X", BRIDGE_MEM32(page + 1024 + i * 4));
+             fprintf(stderr, "\n");
++            /* Hand the page to the next boot (see RECOMP_LAUNCH_FILE at
++             * launch-page setup): a quick reboot on hardware keeps the
++             * page, an ExitProcess cannot. */
++            {
++                const char *launch_file = getenv("RECOMP_LAUNCH_FILE");
++                if (launch_file && *launch_file) {
++                    FILE *lf = fopen(launch_file, "wb");
++                    if (lf) {
++                        uint32_t i;
++                        for (i = 0; i < 0x1000; i++)
++                            fputc(BRIDGE_MEM8(page + i), lf);
++                        fclose(lf);
++                        fprintf(stderr, "  [KERNEL] launch page captured"
++                                        " to %s\n", launch_file);
++                    }
++                }
++            }
+         } else {
+             fprintf(stderr, "  [KERNEL] no launch data page set\n");
+         }
+diff --git a/src/kernel/nv2a_pb_exec.c b/src/kernel/nv2a_pb_exec.c
+index 2ae8468..ff7c591 100644
+--- a/src/kernel/nv2a_pb_exec.c
++++ b/src/kernel/nv2a_pb_exec.c
+@@ -4468,6 +4468,21 @@ void nv2a_pb_exec_report(void)
+             s_gpu.color_offset, s_gpu.pitch, s_gpu.clip_w, s_gpu.clip_h,
+             s_gpu.clip_x, s_gpu.clip_y, s_gpu.clears,
+             s_gpu.unhandled_total, s_unhandled_count);
++    if (getenv("RECOMP_GPU_METHODS")) {
++        /* Which methods, not just how many: the census behind the count,
++         * sorted on a copy so the slot index stays valid. */
++        PbUnhandled top[PB_EXEC_MAX_UNHANDLED];
++        int n = s_unhandled_count, a, b;
++        for (a = 0; a < n; a++) top[a] = s_unhandled[a];
++        for (a = 0; a < n; a++)
++            for (b = a + 1; b < n; b++)
++                if (top[b].count > top[a].count) {
++                    PbUnhandled tmp = top[a]; top[a] = top[b]; top[b] = tmp;
++                }
++        for (a = 0; a < n && a < 20; a++)
++            fprintf(stderr, "[GPU]   unhandled method 0x%04X x%u last=0x%08X\n",
++                    top[a].method, top[a].count, top[a].last_param);
++    }
+     fprintf(stderr, "[GPU] draws %u (%u with coordinates), %u indices;"
+                     " x %.1f..%.1f  y %.1f..%.1f\n",
+             s_gpu.draws, s_gpu.nonzero_draws, s_gpu.verts,
+diff --git a/src/usb/ohci.c b/src/usb/ohci.c
+index f1de80e..95083ca 100644
+--- a/src/usb/ohci.c
++++ b/src/usb/ohci.c
+@@ -519,6 +519,19 @@ static uint32_t bus_resolve(uint32_t addr)
+ {
+     if (addr >= g_xbox_image_lo && addr < g_xbox_image_hi)
+         return addr;
++    /* The high-water fallback below cannot tell a window page from a RAM
++     * page with the same number: a heap buffer named through
++     * MmGetPhysicalAddress keeps its RAM identity however far the arena
++     * has grown (Obi-Wan's XID report buffer at 0x0108174A went to the
++     * window once allocations passed it, and the pad went dead in the
++     * menus it had just navigated). Ask the allocator's own maps first,
++     * the way mcpx_apu_phys resolves the same ambiguity for the APU. */
++    if (addr && addr < OHCI_CONTIG_SIZE) {
++        if (xbox_PhysRamNameMap()[addr >> 12])
++            return addr;
++        if (xbox_ContiguousPageMap()[addr >> 12])
++            return OHCI_CONTIG_BASE + addr;
++    }
+     if (addr && addr < xbox_ContiguousAllocatedBytes())
+         return OHCI_CONTIG_BASE + addr;
+     return addr;
+@@ -646,6 +659,16 @@ static uint32_t ohci_do_td(OhciController *hc, uint32_t ed0, uint32_t td)
+             static uint8_t last_report[USB_GAMEPAD_MAX][20];
+             static int have_report[USB_GAMEPAD_MAX];
+             s_n_report++;
++            static int td_probe = -1;
++            uint32_t probe_pre_pay = 0, probe_pre_sto = 0;
++            if (td_probe < 0)
++                td_probe = getenv("RECOMP_USB_TD_PROBE") != NULL;
++            if (td_probe && cbp >= 0x20u) {
++                uint8_t *pp = guest_ptr(cbp + 2, 4);
++                uint8_t *ps = guest_ptr(cbp - 0x1Eu, 4);
++                if (pp) memcpy(&probe_pre_pay, pp, 4);
++                if (ps) memcpy(&probe_pre_sto, ps, 4);
++            }
+             int n = usb_gamepad_report(pad, rep, (int)sizeof rep);
+             if (n > len) n = len;
+             if (report_trace < 0)
+@@ -669,6 +692,48 @@ static uint32_t ohci_do_td(OhciController *hc, uint32_t ed0, uint32_t td)
+                 }
+                 if (dst)
+                     memcpy(dst, rep, (size_t)n);
++                if (td_probe && cbp >= 0x20u) {
++                    uint32_t post_pay = 0, post_sto = 0, post_len = 0;
++                    unsigned fa2 = 0, fa3 = 0, fdev4 = 0;
++                    {
++                        uint8_t *pl = guest_ptr(cbp + 0x34u, 4);
++                        uint8_t *pa = guest_ptr(cbp + 0x70u, 2);
++                        if (pl) memcpy(&post_len, pl, 4);
++                        if (pa) { fa2 = pa[0]; fa3 = pa[1]; }
++                        if (cbp >= 0x32u) {
++                            uint8_t *pc = guest_ptr(cbp - 0x32u, 4);
++                            if (pc) {
++                                uint32_t dev = 0;
++                                memcpy(&dev, pc, 4);
++                                if (dev) {
++                                    uint8_t *pd = guest_ptr(dev + 4, 1);
++                                    if (pd) fdev4 = pd[0];
++                                }
++                            }
++                        }
++                    }
++                    uint8_t *pp2 = guest_ptr(cbp + 2, 4);
++                    uint8_t *ps2 = guest_ptr(cbp - 0x1Eu, 4);
++                    static uint32_t last_tuple[USB_GAMEPAD_MAX][6];
++                    static int have_tuple[USB_GAMEPAD_MAX];
++                    int pslot = pad % USB_GAMEPAD_MAX;
++                    unsigned r2 = n > 2 ? rep[2] : 0;
++                    unsigned r3 = n > 3 ? rep[3] : 0;
++                    unsigned r4 = n > 4 ? rep[4] : 0;
++                    unsigned r5 = n > 5 ? rep[5] : 0;
++                    if (pp2) memcpy(&post_pay, pp2, 4);
++                    if (ps2) memcpy(&post_sto, ps2, 4);
++                    if (1) {
++                        uint32_t tup[6] = { probe_pre_pay, probe_pre_sto, post_pay, post_sto, post_len, (uint32_t)fa2 | ((uint32_t)fa3 << 8) | ((uint32_t)fdev4 << 16) };
++                        if (!have_tuple[pslot] || memcmp(last_tuple[pslot], tup, sizeof tup) != 0) {
++                            memcpy(last_tuple[pslot], tup, sizeof tup);
++                            have_tuple[pslot] = 1;
++                            fprintf(stderr, "  [TDPROBE] pad %d cbp=%08X pre_pay=%08X pre_sto=%08X rep=%02X%02X%02X%02X post_pay=%08X post_sto=%08X len=%08X a2=%02X a3=%02X dev4=%02X\n",
++                                    pad, cbp, probe_pre_pay, probe_pre_sto, r2, r3, r4, r5, post_pay, post_sto, post_len, fa2, fa3, fdev4);
++                            fflush(stderr);
++                        }
++                    }
++                }
+             }
+             moved = n;
+         }
